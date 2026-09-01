@@ -78,6 +78,7 @@ Auto_Dang_video/
 ├── enable_autostart.bat        # Script 1-click bật tự động khởi động cùng Windows
 ├── disable_autostart.bat       # Script 1-click tắt tự động khởi động cùng Windows
 ├── package_portable.bat        # Script tự động tải Python Embedded và nén thành Auto_Video_Pro_Portable.zip
+├── quick_install.ps1           # Script PowerShell cài đặt siêu tốc 1 dòng lệnh từ xa
 ├── install.bat                 # Script cài đặt môi trường Python venv và Playwright Chromium
 ├── update.bat                  # Script 1-click cập nhật mã nguồn độc lập từ GitHub
 ├── backup_to_github.bat        # Script 1-click đẩy mã nguồn mới nhất lên GitHub (ngonco/dangvideo)

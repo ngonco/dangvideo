@@ -4,6 +4,29 @@
 
 ---
 
+## ⚡ LINK TẢI CÔNG KHAI & CÀI ĐẶT NHANH (LUÔN LÀ BẢN MỚI NHẤT)
+
+### 🌟 Cách 1: Cài đặt tự động siêu tốc 1 dòng lệnh (Khuyến nghị)
+Mở **PowerShell** trên bất kỳ máy tính Windows nào và dán dòng lệnh sau rồi nhấn Enter:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "Invoke-RestMethod https://raw.githubusercontent.com/ngonco/dangvideo/main/quick_install.ps1 | Invoke-Expression"
+```
+
+*(Lệnh trên sẽ tự động: Tải bản mới nhất -> Giải nén vào thư mục `Auto_Video_Pro` -> Cài đặt thư viện -> Tạo Shortcut Màn hình Desktop -> Bật tự động khởi động cùng Windows -> Mở phần mềm ngay!)*
+
+---
+
+### 📦 Cách 2: Tải trực tiếp file ZIP mã nguồn mới nhất
+👉 **[Tải xuống tệp ZIP bản mới nhất từ GitHub](https://github.com/ngonco/dangvideo/archive/refs/heads/main.zip)**
+
+**Sau khi tải về:**
+1. Giải nén file `.zip`.
+2. Chạy file 👉 **`install.bat`** *(Cài đặt môi trường 1-click)*.
+3. Chạy file 👉 **`run.bat`** *(Khởi động phần mềm & mở Web Dashboard tại `http://127.0.0.1:8000`)*.
+
+---
+
 ## 🌟 Tính Năng Nổi Bật
 
 1. **Quét & Tải Tự Động Từ HatBuiNho.com**:
@@ -20,46 +43,13 @@
 4. **Tự Động Cập Nhật Đa Máy (Auto-Updater)**:
    - Tự động kiểm tra và kéo bản mới từ GitHub mỗi khi khởi động qua `run.bat`.
    - Nút **"🔄 Cập Nhật Mã Nguồn"** trực tiếp 1-click trên Web Dashboard.
-5. **Dọn Dẹp Ổ Cứng Tự Động Sau 2 Ngày**:
+5. **Tự Động Khởi Động Cùng Windows (Auto-Start)**:
+   - Chạy ngầm êm ái khi mở máy tính để đảm bảo đúng giờ vàng đăng video.
+   - Bật/Tắt dễ dàng bằng công tắc trên Web Dashboard hoặc qua file `enable_autostart.bat` / `disable_autostart.bat`.
+6. **Dọn Dẹp Ổ Cứng Tự Động Sau 2 Ngày**:
    - Tự động xóa các file `.mp4` cũ trong thư mục `downloads/` mà vẫn bảo toàn 100% lịch sử và đường dẫn bài đăng trong Database.
-6. **Bảo Mật Quyền Riêng Tư Tuyệt Đối**:
-   - Không đồng bộ cookie cá nhân, file video nặng hoặc database lên Git (được bảo vệ qua `.gitignore`).
-
----
-
-## 🛠️ Hướng Dẫn Cài Đặt & Chạy Trên Máy Mới
-
-### Bước 1: Tải mã nguồn về máy tính mới
-Mở Command Prompt (cmd) hoặc Terminal và chạy lệnh:
-```bash
-git clone https://github.com/ngonco/dangvideo.git
-cd dangvideo
-```
-
-### Bước 2: Cài đặt môi trường (1-Click)
-Chạy file:
-👉 **`install.bat`**  
-*(Script sẽ tự động cài đặt các thư viện Python từ `requirements.txt` và trình duyệt Playwright Chromium)*.
-
-### Bước 3: Khởi động và sử dụng
-Chạy file:
-👉 **`run.bat`**  
-*(Hệ thống sẽ tự động kiểm tra bản cập nhật mới từ GitHub, khởi động server và mở giao diện Web tại `http://127.0.0.1:8000`)*.
-
----
-
-## 🔄 Cách Cập Nhật Phần Mềm Khi Có Bản Mới
-
-- **Cách 1:** Chỉ cần khởi động lại file **`run.bat`** (hệ thống sẽ tự động cập nhật).
-- **Cách 2:** Bấm nút **"🔄 Cập Nhật"** trực tiếp trên thanh điều hướng của Web Dashboard.
-- **Cách 3:** Chạy file **`update.bat`**.
-
----
-
-## 🚀 Đẩy Bản Cập Nhật Mới Lên GitHub (Dành cho Lập trình viên)
-Khi bạn chỉnh sửa mã nguồn và muốn cập nhật cho tất cả các máy khác:
-Chạy file:
-👉 **`backup_to_github.bat`**
+7. **Bản Đóng Gói Portable (Python Embedded)**:
+   - Chạy file `package_portable.bat` để tạo ra bản chạy ngay không cần cài đặt Python.
 
 ---
 
