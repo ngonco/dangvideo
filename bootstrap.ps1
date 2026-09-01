@@ -106,5 +106,10 @@ Write-Host ""
 
 Start-Process "http://127.0.0.1:8000"
 
-$AppScript = Join-Path $AppDir "app.py"
-& $PyExe $AppScript
+$TrayScript = Join-Path $AppDir "tray_app.py"
+if (Test-Path $TrayScript) {
+    & $PyExe $TrayScript
+} else {
+    $AppScript = Join-Path $AppDir "app.py"
+    & $PyExe $AppScript
+}

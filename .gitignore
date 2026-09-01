@@ -24,6 +24,11 @@ downloads/*.mov
 data.db
 *.db-journal
 
+# PyInstaller build outputs
+build/
+dist/
+*.spec
+
 # Scratch and Temporary debug scripts
 scratch/
 portable_build/

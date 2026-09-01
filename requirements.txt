@@ -7,3 +7,6 @@ websockets>=12.0
 requests>=2.31.0
 python-multipart>=0.0.6
 aiofiles>=23.2.1
+pystray>=0.19.5
+pillow>=10.0.0
+pyinstaller>=6.0.0

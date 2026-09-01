@@ -69,10 +69,9 @@ graph TD
 ## 2. BẢN ĐỒ CẤU TRÚC FILE & VAI TRÒ THỰC TẾ
 
 ```
-Auto_Dang_video/
-├── app.py                      # Server FastAPI trung tâm, REST API, WebSocket logs, Auto-Update API
-├── config.json                 # Cấu hình toàn hệ thống (tài khoản, lịch giờ vàng, nền tảng, dọn dẹp)
-├── data.db                     # SQLite Database lưu trữ video, lịch sử đăng, link bài viết và trạng thái
+├── Tu_dong_dang_video.exe      # File thực thi nhị phân chính (Chạy ngầm + System Tray Icon + Mở Web)
+├── tray_app.py                 # Module System Tray Icon khay hệ thống (pystray + FastAPI runner)
+├── build_exe.bat               # Script PyInstaller tự động biên dịch Tu_dong_dang_video.exe
 ├── run.bat                     # Launcher 1-click khởi động phần mềm và mở Web Dashboard
 ├── bootstrap.ps1               # Engine khởi tạo môi trường (tự tải Python/Chromium nếu thiếu & chạy server)
 ├── run_hidden.vbs              # Script VBScript chạy ngầm khi Windows khởi động (không hiện cmd đen)

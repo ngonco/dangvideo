@@ -10,7 +10,7 @@ class AutoStartManager:
             os.environ.get("APPDATA", ""),
             r"Microsoft\Windows\Start Menu\Programs\Startup"
         )
-        self.shortcut_path = os.path.join(self.startup_dir, "AutoVideoPro.lnk")
+        self.exe_target = os.path.join(self.app_dir, "Tu_dong_dang_video.exe")
         self.vbs_target = os.path.join(self.app_dir, "run_hidden.vbs")
         self.bat_target = os.path.join(self.app_dir, "run.bat")
 
@@ -19,12 +19,17 @@ class AutoStartManager:
         return os.path.exists(self.shortcut_path)
 
     def enable_autostart(self) -> bool:
-        """Tạo shortcut khởi động cùng Windows trỏ tới run_hidden.vbs hoặc run.bat"""
+        """Tạo shortcut khởi động cùng Windows trỏ tới Tu_dong_dang_video.exe hoặc run_hidden.vbs"""
         try:
             os.makedirs(self.startup_dir, exist_ok=True)
             
-            # Ưu tiên chạy qua run_hidden.vbs nếu có để không hiện popup cmd
-            target = self.vbs_target if os.path.exists(self.vbs_target) else self.bat_target
+            # Ưu tiên chạy qua Tu_dong_dang_video.exe nếu có
+            if os.path.exists(self.exe_target):
+                target = self.exe_target
+            elif os.path.exists(self.vbs_target):
+                target = self.vbs_target
+            else:
+                target = self.bat_target
             
             # Sử dụng PowerShell để tạo file .lnk Windows Shortcut chuẩn xác
             ps_script = f"""
