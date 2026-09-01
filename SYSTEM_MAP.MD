@@ -73,13 +73,14 @@ Auto_Dang_video/
 ├── app.py                      # Server FastAPI trung tâm, REST API, WebSocket logs, Auto-Update API
 ├── config.json                 # Cấu hình toàn hệ thống (tài khoản, lịch giờ vàng, nền tảng, dọn dẹp)
 ├── data.db                     # SQLite Database lưu trữ video, lịch sử đăng, link bài viết và trạng thái
-├── run.bat                     # Launcher 1-click: Tự động bootstrap Python Embedded, cài thư viện & mở Web
+├── run.bat                     # Launcher 1-click khởi động phần mềm và mở Web Dashboard
+├── bootstrap.ps1               # Engine khởi tạo môi trường (tự tải Python/Chromium nếu thiếu & chạy server)
 ├── run_hidden.vbs              # Script VBScript chạy ngầm khi Windows khởi động (không hiện cmd đen)
 ├── enable_autostart.bat        # Script 1-click bật tự động khởi động cùng Windows
 ├── disable_autostart.bat       # Script 1-click tắt tự động khởi động cùng Windows
 ├── package_portable.bat        # Script tự động tải Python Embedded và nén thành Auto_Video_Pro_Portable.zip
 ├── quick_install.ps1           # Script PowerShell cài đặt siêu tốc 1 dòng lệnh từ xa
-├── install.bat                 # Script thiết lập môi trường độc lập (tự tải Python Embedded nếu máy chưa có)
+├── install.bat                 # Script cài đặt môi trường độc lập
 ├── update.bat                  # Script 1-click cập nhật mã nguồn độc lập từ GitHub
 ├── backup_to_github.bat        # Script 1-click đẩy mã nguồn mới nhất lên GitHub (ngonco/dangvideo)
 ├── README.md                   # Hướng dẫn cài đặt và chạy trên nhiều máy tính
