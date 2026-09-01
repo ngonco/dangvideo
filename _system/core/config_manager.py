@@ -2,14 +2,22 @@ import json
 import os
 from typing import Dict, Any
 
-# Dynamic Path Resolution supporting _system/ directory structure
-CURR_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if os.path.basename(CURR_DIR) == "_system":
-    SYSTEM_DIR = CURR_DIR
-    ROOT_DIR = os.path.dirname(CURR_DIR)
+import sys
+
+# Dynamic Path Resolution supporting PyInstaller frozen mode and _system/ directory structure
+if getattr(sys, 'frozen', False):
+    ROOT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    SYSTEM_DIR = os.path.join(ROOT_DIR, "_system")
+    if not os.path.exists(SYSTEM_DIR):
+        SYSTEM_DIR = ROOT_DIR
 else:
-    SYSTEM_DIR = CURR_DIR
-    ROOT_DIR = CURR_DIR
+    CURR_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.basename(CURR_DIR) == "_system":
+        SYSTEM_DIR = CURR_DIR
+        ROOT_DIR = os.path.dirname(CURR_DIR)
+    else:
+        SYSTEM_DIR = CURR_DIR
+        ROOT_DIR = CURR_DIR
 
 DOWNLOADS_DIR = os.path.join(ROOT_DIR, "downloads")
 PROFILES_DIR = os.path.join(SYSTEM_DIR, "browser_profiles")

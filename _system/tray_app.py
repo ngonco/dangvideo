@@ -7,11 +7,12 @@ import uvicorn
 import pystray
 from PIL import Image, ImageDraw
 from core.logger import logger
+from core.config_manager import ROOT_DIR, SYSTEM_DIR
 from core.autostart_manager import autostart_mgr
 
 # Base directory
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, SYSTEM_DIR)
+sys.path.insert(0, ROOT_DIR)
 
 class TrayApplication:
     def __init__(self):
