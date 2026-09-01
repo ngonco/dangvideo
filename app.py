@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from core.logger import logger
 from core.database import db
 from core.config_manager import config_mgr
+from core.autostart_manager import autostart_mgr
 from automation.workflow_manager import workflow_mgr
 from scheduler.task_scheduler import task_scheduler
 
@@ -164,6 +165,21 @@ async def get_system_version():
         "date": commit_date,
         "message": commit_msg
     }
+
+@app.get("/api/system/autostart")
+async def get_autostart_status():
+    return {"enabled": autostart_mgr.is_autostart_enabled()}
+
+class AutoStartRequest(BaseModel):
+    enabled: bool
+
+@app.post("/api/system/autostart")
+async def toggle_autostart(req: AutoStartRequest):
+    if req.enabled:
+        success = autostart_mgr.enable_autostart()
+    else:
+        success = autostart_mgr.disable_autostart()
+    return {"success": success, "enabled": autostart_mgr.is_autostart_enabled()}
 
 @app.post("/api/system/update")
 async def perform_system_update():

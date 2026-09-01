@@ -74,6 +74,10 @@ Auto_Dang_video/
 ├── config.json                 # Cấu hình toàn hệ thống (tài khoản, lịch giờ vàng, nền tảng, dọn dẹp)
 ├── data.db                     # SQLite Database lưu trữ video, lịch sử đăng, link bài viết và trạng thái
 ├── run.bat                     # Script 1-click khởi động ứng dụng và tự kiểm tra cập nhật từ GitHub
+├── run_hidden.vbs              # Script VBScript chạy ngầm khi Windows khởi động (không hiện cmd đen)
+├── enable_autostart.bat        # Script 1-click bật tự động khởi động cùng Windows
+├── disable_autostart.bat       # Script 1-click tắt tự động khởi động cùng Windows
+├── package_portable.bat        # Script tự động tải Python Embedded và nén thành Auto_Video_Pro_Portable.zip
 ├── install.bat                 # Script cài đặt môi trường Python venv và Playwright Chromium
 ├── update.bat                  # Script 1-click cập nhật mã nguồn độc lập từ GitHub
 ├── backup_to_github.bat        # Script 1-click đẩy mã nguồn mới nhất lên GitHub (ngonco/dangvideo)
@@ -83,6 +87,7 @@ Auto_Dang_video/
 │
 ├── core/                       # Các module hạ tầng cốt lõi
 │   ├── __init__.py
+│   ├── autostart_manager.py    # Quản lý tạo/xóa Windows Startup Shortcut (Auto-start with Windows)
 │   ├── config_manager.py       # Đọc/ghi cấu hình config.json an toàn với fallback mặc định
 │   ├── database.py             # SQLite helper: quản lý bảng videos, post_history, stats, clean_old_posted_videos
 │   └── logger.py               # Logger trung tâm hỗ trợ stream realtime qua WebSocket và in màu console

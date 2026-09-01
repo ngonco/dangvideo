@@ -271,12 +271,24 @@
         <!-- System & GitHub Auto-Update Card -->
         <div class="settings-card">
           <div class="settings-card-title">
-            <span>🔄</span> Cập Nhật & Phiên Bản Hệ Thống
+            <span>⚙️</span> Hệ Thống & Tự Động Khởi Động
+          </div>
+
+          <!-- Windows Startup Toggle -->
+          <div class="toggle-row" style="margin-bottom: 1rem; padding-bottom: 0.8rem; border-bottom: 1px solid var(--border-color);">
+            <div class="toggle-info">
+              <span>🚀 Tự động khởi động cùng Windows</span>
+              <small>Tự động chạy ngầm khi mở máy tính để kịp giờ đăng video</small>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfgAutoStart">
+              <span class="slider"></span>
+            </label>
           </div>
 
           <div style="margin-bottom: 12px;">
             <p style="color: var(--text-muted); font-size: 0.88rem; line-height: 1.5;">
-              Hệ thống tự động kiểm tra và đồng bộ mã nguồn mới nhất từ kho lưu trữ GitHub.
+              Tự động kiểm tra và đồng bộ mã nguồn mới nhất từ kho lưu trữ GitHub.
             </p>
             <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
               <span class="badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 0.8rem;" id="systemVersionText">Phiên bản: v1.0.0</span>

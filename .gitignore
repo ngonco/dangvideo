@@ -26,6 +26,8 @@ data.db
 
 # Scratch and Temporary debug scripts
 scratch/
+portable_build/
+*.zip
 .pytest_cache/
 .coverage
 htmlcov/

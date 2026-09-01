@@ -322,6 +322,14 @@ function setupEventListeners() {
   const btnSystemUpdate = document.getElementById('btnSystemUpdate');
   if (btnSystemUpdate) btnSystemUpdate.addEventListener('click', triggerSystemUpdate);
 
+  // AutoStart Switch Listener
+  const autoStartToggle = document.getElementById('cfgAutoStart');
+  if (autoStartToggle) {
+    autoStartToggle.addEventListener('change', (e) => {
+      handleAutoStartToggle(e.target.checked);
+    });
+  }
+
   document.getElementById('btnClosePostModal').addEventListener('click', closePostModal);
   document.getElementById('btnCancelPostModal').addEventListener('click', closePostModal);
   document.getElementById('btnConfirmPost').addEventListener('click', executePostModal);
@@ -330,7 +338,7 @@ function setupEventListeners() {
   document.getElementById('btnCloseLinksModalBtn').addEventListener('click', closeLinksModal);
 }
 
-// Load System Version
+// Load System Version & AutoStart Status
 async function loadSystemVersion() {
   try {
     const res = await fetch('/api/system/version');
@@ -345,6 +353,38 @@ async function loadSystemVersion() {
     }
   } catch (e) {
     console.error('Không thể tải phiên bản hệ thống:', e);
+  }
+
+  // Load AutoStart status
+  try {
+    const res = await fetch('/api/system/autostart');
+    const data = await res.json();
+    const autoStartToggle = document.getElementById('cfgAutoStart');
+    if (autoStartToggle) {
+      autoStartToggle.checked = !!data.enabled;
+    }
+  } catch (e) {
+    console.error('Không thể tải trạng thái autostart:', e);
+  }
+}
+
+// Toggle AutoStart
+async function handleAutoStartToggle(enabled) {
+  try {
+    const res = await fetch('/api/system/autostart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      const msg = data.enabled 
+        ? '✅ ĐÃ BẬT TỰ ĐỘNG KHỞI ĐỘNG CÙNG WINDOWS!\n\nMỗi khi bạn mở máy tính, phần mềm sẽ tự động chạy ngầm để đảm bảo kịp giờ đăng video.' 
+        : '🛑 ĐÃ TẮT TỰ ĐỘNG KHỞI ĐỘNG CÙNG WINDOWS.';
+      alert(msg);
+    }
+  } catch (e) {
+    alert('Lỗi khi thiết lập autostart: ' + e.message);
   }
 }
 
