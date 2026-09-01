@@ -13,14 +13,12 @@ from pydantic import BaseModel
 
 from core.logger import logger
 from core.database import db
-from core.config_manager import config_mgr
+from core.config_manager import config_mgr, ROOT_DIR, SYSTEM_DIR, DOWNLOADS_DIR
 from core.autostart_manager import autostart_mgr
 from automation.workflow_manager import workflow_mgr
 from scheduler.task_scheduler import task_scheduler
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
+STATIC_DIR = os.path.join(SYSTEM_DIR, "static")
 
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
@@ -152,7 +150,7 @@ async def get_system_version():
     commit_date = ""
     commit_msg = "Phiên bản mới nhất"
     try:
-        res = subprocess.run(["git", "log", "-1", "--format=%h|%cd|%s", "--date=short"], capture_output=True, text=True, cwd=BASE_DIR, timeout=5)
+        res = subprocess.run(["git", "log", "-1", "--format=%h|%cd|%s", "--date=short"], capture_output=True, text=True, cwd=ROOT_DIR, timeout=5)
         if res.returncode == 0 and res.stdout.strip():
             parts = res.stdout.strip().split("|")
             if len(parts) >= 3:
@@ -185,7 +183,7 @@ async def toggle_autostart(req: AutoStartRequest):
 async def perform_system_update():
     logger.info("Bắt đầu kiểm tra và cập nhật mã nguồn từ GitHub...", "UPDATE")
     try:
-        res = subprocess.run(["git", "pull", "origin", "main"], capture_output=True, text=True, cwd=BASE_DIR, timeout=40)
+        res = subprocess.run(["git", "pull", "origin", "main"], capture_output=True, text=True, cwd=ROOT_DIR, timeout=40)
         output = (res.stdout or "") + (res.stderr or "")
         if res.returncode == 0:
             if "Already up to date" in output or "Already up-to-date" in output:

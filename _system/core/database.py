@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data.db")
+from core.config_manager import DB_PATH
 
 class Database:
     def __init__(self, db_path: str = DB_PATH):

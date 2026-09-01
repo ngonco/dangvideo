@@ -2,17 +2,19 @@ import os
 import sys
 import subprocess
 from core.logger import logger
+from core.config_manager import ROOT_DIR, SYSTEM_DIR
 
 class AutoStartManager:
     def __init__(self):
-        self.app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.app_dir = ROOT_DIR
         self.startup_dir = os.path.join(
             os.environ.get("APPDATA", ""),
             r"Microsoft\Windows\Start Menu\Programs\Startup"
         )
-        self.exe_target = os.path.join(self.app_dir, "Tu_dong_dang_video.exe")
-        self.vbs_target = os.path.join(self.app_dir, "run_hidden.vbs")
-        self.bat_target = os.path.join(self.app_dir, "run.bat")
+        self.shortcut_path = os.path.join(self.startup_dir, "AutoVideoPro.lnk")
+        self.exe_target = os.path.join(ROOT_DIR, "Tu_dong_dang_video.exe")
+        self.vbs_target = os.path.join(SYSTEM_DIR, "run_hidden.vbs")
+        self.bat_target = os.path.join(SYSTEM_DIR, "run.bat")
 
     def is_autostart_enabled(self) -> bool:
         """Kiểm tra xem shortcut khởi động cùng Windows đã tồn tại chưa"""

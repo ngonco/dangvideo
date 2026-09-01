@@ -69,22 +69,32 @@ graph TD
 ## 2. BẢN ĐỒ CẤU TRÚC FILE & VAI TRÒ THỰC TẾ
 
 ```
-├── Tu_dong_dang_video.exe      # File thực thi nhị phân chính (Chạy ngầm + System Tray Icon + Mở Web)
-├── tray_app.py                 # Module System Tray Icon khay hệ thống (pystray + FastAPI runner)
-├── build_exe.bat               # Script PyInstaller tự động biên dịch Tu_dong_dang_video.exe
-├── run.bat                     # Launcher 1-click khởi động phần mềm và mở Web Dashboard
-├── bootstrap.ps1               # Engine khởi tạo môi trường (tự tải Python/Chromium nếu thiếu & chạy server)
-├── run_hidden.vbs              # Script VBScript chạy ngầm khi Windows khởi động (không hiện cmd đen)
-├── enable_autostart.bat        # Script 1-click bật tự động khởi động cùng Windows
-├── disable_autostart.bat       # Script 1-click tắt tự động khởi động cùng Windows
-├── package_portable.bat        # Script tự động tải Python Embedded và nén thành Auto_Video_Pro_Portable.zip
-├── quick_install.ps1           # Script PowerShell cài đặt siêu tốc 1 dòng lệnh từ xa
-├── install.bat                 # Script cài đặt môi trường độc lập
-├── update.bat                  # Script 1-click cập nhật mã nguồn độc lập từ GitHub
-├── backup_to_github.bat        # Script 1-click đẩy mã nguồn mới nhất lên GitHub (ngonco/dangvideo)
-├── README.md                   # Hướng dẫn cài đặt và chạy trên nhiều máy tính
-├── SYSTEM_MAP.MD               # [TÀI LIỆU NÀY] Bản đồ hệ thống và quy tắc phát triển bắt buộc
-├── test_all_platforms.py       # Script kiểm thử độc lập luồng đăng 4 nền tảng với dữ liệu thực tế
+Auto_Dang_video/
+├── Tu_dong_dang_video.exe      # File thực thi duy nhất người dùng cần click ở thư mục gốc
+├── Huong_dan_su_dung.txt       # Hướng dẫn sử dụng 1-click ngắn gọn, thân thiện
+├── downloads/                  # Thư mục chứa các video tải về để người dùng dễ xem
+│   └── .gitkeep
+│
+└── _system/                    # THƯ MỤC HỆ THỐNG (Chứa toàn bộ mã nguồn & engine ngầm)
+    ├── app.py                  # Server FastAPI trung tâm, REST API, WebSocket logs, Auto-Update API
+    ├── tray_app.py             # Module System Tray Icon khay hệ thống (pystray + FastAPI runner)
+    ├── config.json             # Cấu hình toàn hệ thống (tài khoản, lịch giờ vàng, nền tảng, dọn dẹp)
+    ├── data.db                 # SQLite Database lưu trữ video, lịch sử đăng, link bài viết và trạng thái
+    ├── requirements.txt        # Danh sách thư viện Python phụ thuộc
+    ├── SYSTEM_MAP.MD           # [TÀI LIỆU NÀY] Bản đồ hệ thống và quy tắc phát triển bắt buộc
+    ├── README.md               # Hướng dẫn cài đặt và chạy trên nhiều máy tính
+    ├── run.bat                 # Script batch dự phòng khởi động ứng dụng
+    ├── bootstrap.ps1           # Engine khởi tạo môi trường (tự tải Python/Chromium nếu thiếu & chạy server)
+    ├── run_hidden.vbs          # Script VBScript chạy ngầm khi Windows khởi động (không hiện cmd đen)
+    ├── enable_autostart.bat    # Script 1-click bật tự động khởi động cùng Windows
+    ├── disable_autostart.bat   # Script 1-click tắt tự động khởi động cùng Windows
+    ├── package_portable.bat    # Script tự động tải Python Embedded và nén thành Auto_Video_Pro_Portable.zip
+    ├── quick_install.ps1       # Script PowerShell cài đặt siêu tốc 1 dòng lệnh từ xa
+    ├── install.bat             # Script cài đặt môi trường độc lập
+    ├── update.bat              # Script 1-click cập nhật mã nguồn độc lập từ GitHub
+    ├── backup_to_github.bat    # Script 1-click đẩy mã nguồn mới nhất lên GitHub (ngonco/dangvideo)
+    ├── build_exe.bat           # Script PyInstaller tự động biên dịch Tu_dong_dang_video.exe
+    ├── test_all_platforms.py   # Script kiểm thử độc lập luồng đăng 4 nền tảng với dữ liệu thực tế
 │
 ├── core/                       # Các module hạ tầng cốt lõi
 │   ├── __init__.py

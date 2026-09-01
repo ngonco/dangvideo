@@ -3,12 +3,8 @@ import sys
 import asyncio
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, BrowserContext, Page, Playwright
-from core.config_manager import config_mgr
+from core.config_manager import config_mgr, DOWNLOADS_DIR, PROFILES_DIR
 from core.logger import logger
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
-PROFILES_DIR = os.path.join(BASE_DIR, "browser_profiles")
 
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 os.makedirs(PROFILES_DIR, exist_ok=True)

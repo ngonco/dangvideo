@@ -2,7 +2,19 @@ import json
 import os
 from typing import Dict, Any
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+# Dynamic Path Resolution supporting _system/ directory structure
+CURR_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if os.path.basename(CURR_DIR) == "_system":
+    SYSTEM_DIR = CURR_DIR
+    ROOT_DIR = os.path.dirname(CURR_DIR)
+else:
+    SYSTEM_DIR = CURR_DIR
+    ROOT_DIR = CURR_DIR
+
+DOWNLOADS_DIR = os.path.join(ROOT_DIR, "downloads")
+PROFILES_DIR = os.path.join(SYSTEM_DIR, "browser_profiles")
+CONFIG_PATH = os.path.join(SYSTEM_DIR, "config.json")
+DB_PATH = os.path.join(SYSTEM_DIR, "data.db")
 
 DEFAULT_CONFIG = {
     "hatbuinho": {

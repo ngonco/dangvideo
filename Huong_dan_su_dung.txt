@@ -1,0 +1,31 @@
+======================================================================
+           🚀 HƯỚNG DẪN SỬ DỤNG: TỰ ĐỘNG ĐĂNG VIDEO PRO
+======================================================================
+
+1. CÁCH KHỞI CHẠY PHẦN MỀM:
+----------------------------------------------------------------------
+👉 Bạn chỉ cần CLICK ĐÚP vào file:
+   [ Tu_dong_dang_video.exe ]
+
+- Hệ thống sẽ tự động khởi động máy chủ ngầm.
+- Trình duyệt sẽ tự động mở Bảng Điều Khiển tại: http://127.0.0.1:8000
+- Biểu tượng logo sẽ xuất hiện tại Khay Hệ Thống (góc dưới bên phải màn hình).
+
+
+2. TƯƠNG TÁC VỚI BIỂU TƯỢNG KHAY HỆ THỐNG (SYSTEM TRAY ICON):
+----------------------------------------------------------------------
+- Click đúp vào icon: Tự động mở lại giao diện Web Dashboard bất cứ lúc nào.
+- Chuột phải vào icon để chọn:
+  + 🌐 Mở Bảng Điều Khiển
+  + 🚀 Khởi Động Cùng Windows (Bật/Tắt chạy ngầm khi mở máy tính)
+  + 🔄 Kiểm Tra Cập Nhật
+  + ❌ Thoát Ứng Dụng (Tắt an toàn)
+
+
+3. THƯ MỤC LƯU TRỮ:
+----------------------------------------------------------------------
+- downloads/ : Nơi lưu các video đã tải về từ HatBuiNho.com.
+- _system/   : Chứa toàn bộ mã nguồn và cấu hình ngầm của hệ thống.
+
+======================================================================
+Chúc bạn xây kênh thành công và bùng nổ tương tác!
