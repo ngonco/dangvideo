@@ -19,6 +19,11 @@ from automation.workflow_manager import workflow_mgr
 from scheduler.task_scheduler import task_scheduler
 
 STATIC_DIR = os.path.join(SYSTEM_DIR, "static")
+if not os.path.exists(STATIC_DIR):
+    if hasattr(sys, '_MEIPASS') and os.path.exists(os.path.join(sys._MEIPASS, "static")):
+        STATIC_DIR = os.path.join(sys._MEIPASS, "static")
+    elif os.path.exists(os.path.join(ROOT_DIR, "static")):
+        STATIC_DIR = os.path.join(ROOT_DIR, "static")
 
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
