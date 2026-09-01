@@ -1,13 +1,21 @@
+import os
 import sys
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8')
-
 import logging
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Callable
+
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 class UILogger:
     def __init__(self, max_history: int = 500):
@@ -19,10 +27,14 @@ class UILogger:
         self.logger = logging.getLogger("AutoVideoPoster")
         self.logger.setLevel(logging.INFO)
         if not self.logger.handlers:
-            handler = logging.StreamHandler(sys.stdout)
-            formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+            try:
+                stream = sys.stdout if sys.stdout is not None else open(os.devnull, "w")
+                handler = logging.StreamHandler(stream)
+                formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
+                handler.setFormatter(formatter)
+                self.logger.addHandler(handler)
+            except Exception:
+                pass
 
     def log(self, message: str, level: str = "INFO", category: str = "SYSTEM"):
         timestamp = datetime.now().strftime("%H:%M:%S")
