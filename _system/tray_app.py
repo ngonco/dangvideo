@@ -104,6 +104,8 @@ class TrayApplication:
                 access_log=False
             )
             self.server = uvicorn.Server(config)
+            # Ngăn uvicorn đăng ký signal handlers từ thread phụ (gây lỗi trên Windows)
+            self.server.install_signal_handlers = lambda: None
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(self.server.serve())
