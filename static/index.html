@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auto Video Pro - Tự Động Tải & Đăng Đa Nền Tảng</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="logo-group">
+      <div class="logo-icon">🚀</div>
+      <div class="logo-text">
+        <h1>AUTO POST PRO</h1>
+        <p>Tải từ HatBuiNho &bull; Đăng YouTube, TikTok, FB, IG</p>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" data-tab="videos">
+        <span>🎬</span> Danh Sách Video
+      </button>
+      <button class="tab-btn" data-tab="settings">
+        <span>⚙️</span> Lịch & Kênh Đăng
+      </button>
+      <button class="tab-btn" data-tab="accounts">
+        <span>🔐</span> Quản Lý Đăng Nhập
+      </button>
+      <button class="tab-btn" data-tab="logs">
+        <span>📜</span> Nhật Ký Realtime
+      </button>
+    </nav>
+
+    <!-- Header Actions -->
+    <div class="header-actions">
+      <div class="bot-status-badge" id="botStatusBadge">
+        <span class="pulse-dot"></span>
+        <span id="botStatusText">Sẵn sàng</span>
+      </div>
+
+      <button class="btn btn-primary" id="btnQuickScan" title="Chỉ quét các video có nhãn 'Chưa tải xuống'">
+        <span>⚡</span> Quét HatBuiNho (Chuẩn)
+      </button>
+
+      <button class="btn btn-outline" id="btnToggleAuto">
+        <span id="autoModeIcon">⏸️</span>
+        <span id="autoModeText">Lịch Tự Động: TẮT</span>
+      </button>
+
+      <button class="btn btn-outline" id="btnHeaderUpdate" title="Kiểm tra và cập nhật mã nguồn mới nhất từ GitHub">
+        <span>🔄</span> Cập Nhật
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content Body -->
+  <main class="main-content">
+
+    <!-- Top Metrics Overview -->
+    <section class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon blue">📦</div>
+        <div class="stat-info">
+          <div class="stat-value" id="statTotalVideos">0</div>
+          <div class="stat-label">Tổng video đã tải về</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon green">🚀</div>
+        <div class="stat-info">
+          <div class="stat-value" id="statPostsToday">0 / 3</div>
+          <div class="stat-label">Đã đăng hôm nay (Theo giới hạn)</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon purple">✨</div>
+        <div class="stat-info">
+          <div class="stat-value" id="statTotalSuccess">0</div>
+          <div class="stat-label">Lượt đăng thành công</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon amber">🤖</div>
+        <div class="stat-info">
+          <div class="stat-value" id="statAutoStatus">Tắt</div>
+          <div class="stat-label">Trạng thái chạy nền theo giờ</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 1: Danh Sách Video -->
+    <section class="tab-view active" id="tab-videos">
+      <div class="section-header">
+        <div class="section-title">
+          <span>🎬</span> Kho Video Đã Tải & Đăng Tải
+        </div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button class="btn btn-outline btn-sm" id="btnRefreshVideos">
+            🔄 Làm Mới
+          </button>
+          <button class="btn btn-outline btn-sm" style="border-color: #f59e0b; color: #fbbf24;" id="btnTestDownloadLatest" title="Chế độ Test: Tải video mới nhất dù là Đã tải xuống">
+            🧪 Test Tải Video Mới Nhất
+          </button>
+          <button class="btn btn-success btn-sm" id="btnScanCustom" title="Chỉ tải các video 'Chưa tải xuống'">
+            📥 Quét Video Chưa Tải
+          </button>
+        </div>
+      </div>
+
+      <!-- Video Grid Container -->
+      <div class="video-grid" id="videoGridContainer">
+        <!-- Rendered dynamically by JS -->
+      </div>
+    </section>
+
+    <!-- TAB 2: Cài Đặt Lịch & Kênh -->
+    <section class="tab-view" id="tab-settings">
+      <div class="section-header">
+        <div class="section-title">
+          <span>⚙️</span> Cấu Hình Kênh, Lịch Đăng & Tự Động Dọn Dẹp
+        </div>
+        <button class="btn btn-primary" id="btnSaveConfig">
+          💾 Lưu Cài Đặt
+        </button>
+      </div>
+
+      <div class="settings-grid">
+        <!-- Platforms Config -->
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>🌐</span> Nền Tảng Mục Tiêu
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span>YouTube Shorts</span>
+              <small>Tự động upload, tối ưu tiêu đề, chọn Not Made for Kids & gắn nhãn AI</small>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfgYtEnabled">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span>TikTok Creator</span>
+              <small>Upload Creator Center & bật AI-generated content</small>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfgTtEnabled">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span>Facebook Reels / Fanpage</span>
+              <small>Tự động đăng Reels lên Trang / Trang cá nhân</small>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfgFbEnabled">
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span>Instagram Reels</span>
+              <small>Tự động đăng bài Reels lên Instagram</small>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfgIgEnabled">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Schedule & Limits -->
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>⏰</span> Lịch Đăng & Giới Hạn Tránh Spam
+          </div>
+
+          <div class="form-group">
+            <label>Số video đăng tối đa mỗi ngày</label>
+            <input type="number" class="form-input" id="cfgMaxPosts" min="1" max="20" value="3">
+          </div>
+
+          <div class="form-group">
+            <label>Khung giờ vàng đăng tự động (Cách nhau bởi dấu phẩy)</label>
+            <input type="text" class="form-input" id="cfgTimeSlots" value="08:00, 11:30, 19:30">
+          </div>
+
+          <div class="form-group">
+            <label>Tần suất quét video mới (Phút)</label>
+            <input type="number" class="form-input" id="cfgScanInterval" min="10" max="720" value="60">
+          </div>
+        </div>
+
+        <!-- Auto-Cleanup Settings -->
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>🧹</span> Tự Động Dọn Dẹp Dung Lượng Ổ Cứng
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span>Tự động dọn dẹp file .mp4</span>
+              <small>Xóa tệp video đã đăng để giải phóng ổ cứng (vẫn lưu lịch sử)</small>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="cfgAutoCleanup" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label>Tự động xóa video sau số ngày đã đăng</label>
+            <input type="number" class="form-input" id="cfgRetentionDays" min="1" max="30" value="2">
+          </div>
+
+          <button class="btn btn-outline btn-sm" id="btnManualCleanup" style="margin-top: 6px;">
+            🗑️ Dọn Dẹp File Cũ (> 2 Ngày) Ngay
+          </button>
+        </div>
+
+        <!-- Caption Customizer -->
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>✍️</span> Chữ Ký & Hashtag Bổ Sung
+          </div>
+
+          <div class="form-group">
+            <label>Đoạn mở đầu (Prefix - tuỳ chọn)</label>
+            <input type="text" class="form-input" id="cfgPrefixText" placeholder="Ví dụ: [Lắng Đọng Tâm Hồn]">
+          </div>
+
+          <div class="form-group">
+            <label>Chữ ký cuối bài / Hashtag thêm (Append)</label>
+            <textarea class="form-input" id="cfgAppendText" placeholder="#hatbuinho #tam_hon #dao_duc"></textarea>
+          </div>
+        </div>
+
+        <!-- HatBuiNho Credentials -->
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>🔑</span> Tài Khoản HatBuiNho.com
+          </div>
+
+          <div class="form-group">
+            <label>Tên đăng nhập / Email</label>
+            <input type="text" class="form-input" id="cfgHatUser" value="cun">
+          </div>
+
+          <div class="form-group">
+            <label>Mật khẩu</label>
+            <input type="password" class="form-input" id="cfgHatPass" value="123">
+          </div>
+        </div>
+
+        <!-- System & GitHub Auto-Update Card -->
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>🔄</span> Cập Nhật & Phiên Bản Hệ Thống
+          </div>
+
+          <div style="margin-bottom: 12px;">
+            <p style="color: var(--text-muted); font-size: 0.88rem; line-height: 1.5;">
+              Hệ thống tự động kiểm tra và đồng bộ mã nguồn mới nhất từ kho lưu trữ GitHub.
+            </p>
+            <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
+              <span class="badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 0.8rem;" id="systemVersionText">Phiên bản: v1.0.0</span>
+              <span style="color: var(--text-dim); font-size: 0.8rem;" id="systemCommitDate"></span>
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-sm" id="btnSystemUpdate" style="width: 100%; margin-top: 6px;">
+            <span>🔄</span> Kiểm Tra & Cập Nhật Mã Nguồn Ngay
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: Quản Lý Đăng Nhập -->
+    <section class="tab-view" id="tab-accounts">
+      <div class="section-header">
+        <div class="section-title">
+          <span>🔐</span> Trung Tâm Đăng Nhập Trình Duyệt (Chrome Profile)
+        </div>
+      </div>
+
+      <div style="background: var(--bg-card); padding: 1.5rem; border-radius: var(--radius-lg); border: 1px solid var(--border-color); margin-bottom: 1.5rem;">
+        <p style="color: var(--text-muted); line-height: 1.6;">
+          💡 <strong>Hướng dẫn:</strong> Bấm vào các nút bên dưới để mở cửa sổ trình duyệt Chrome thật. Đăng nhập tài khoản của bạn (hỗ trợ 2FA/OTP bình thường). Trình duyệt sẽ <strong>tự động lưu vĩnh viễn</strong> phiên đăng nhập trong máy của bạn, các lần chạy sau hệ thống sẽ tự động đăng mà không cần nhập lại mật khẩu!
+        </p>
+      </div>
+
+      <div class="settings-grid">
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>🌱</span> HatBuiNho.com
+          </div>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">Đăng nhập tài khoản tạo video hatbuinho.com để tải video chất lượng cao.</p>
+          <button class="btn btn-outline" onclick="openLoginUrl('https://hatbuinho.com/')">
+            🚀 Mở HatBuiNho Đăng Nhập
+          </button>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>▶️</span> YouTube Studio
+          </div>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">Đăng nhập tài khoản Google quản lý kênh YouTube của bạn.</p>
+          <button class="btn btn-outline" onclick="openLoginUrl('https://studio.youtube.com/')">
+            🚀 Mở YouTube Studio Đăng Nhập
+          </button>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>🎵</span> TikTok Creator Center
+          </div>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">Đăng nhập tài khoản TikTok của bạn để cấp quyền upload video.</p>
+          <button class="btn btn-outline" onclick="openLoginUrl('https://www.tiktok.com/creator-center/upload')">
+            🚀 Mở TikTok Đăng Nhập
+          </button>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-title">
+            <span>📘</span> Facebook & Instagram
+          </div>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">Đăng nhập Facebook Fanpage / Profile và Instagram Reels.</p>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-outline" style="flex: 1;" onclick="openLoginUrl('https://www.facebook.com/')">
+              FB Đăng Nhập
+            </button>
+            <button class="btn btn-outline" style="flex: 1;" onclick="openLoginUrl('https://www.instagram.com/')">
+              IG Đăng Nhập
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: Nhật Ký Realtime -->
+    <section class="tab-view" id="tab-logs">
+      <div class="section-header">
+        <div class="section-title">
+          <span>📜</span> Nhật Ký Hoạt Động Trực Tiếp (Live Console)
+        </div>
+        <button class="btn btn-outline btn-sm" id="btnClearLogs">
+          🧹 Xoá Nhật Ký
+        </button>
+      </div>
+
+      <div class="terminal-card">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <div class="dot red"></div>
+            <div class="dot yellow"></div>
+            <div class="dot green"></div>
+          </div>
+          <span style="font-size: 0.8rem; color: var(--text-dim);">TERMINAL &bull; WEBSOCKET LIVE STREAM</span>
+        </div>
+        <div class="terminal-body" id="terminalBody">
+          <!-- Live logs inserted here -->
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Quick Post Modal Dialog -->
+  <div class="modal-backdrop" id="postModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-title">🚀 Đăng Video Lên Mạng Xã Hội</div>
+        <button class="modal-close" id="btnClosePostModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="modalVideoId">
+        <div class="form-group">
+          <label style="font-size: 0.85rem; color: var(--text-muted);">Tiêu đề đăng bài (Bạn có thể chỉnh sửa tại đây):</label>
+          <input type="text" class="form-input" id="modalVideoTitleInput">
+        </div>
+        
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+          <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Chọn nền tảng đăng:</label>
+          
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="postModalYt" checked> <span>YouTube Shorts (Kèm Not Made for Kids & Nhãn AI)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="postModalTt" checked> <span>TikTok Creator (Kèm nhãn AI)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="postModalFb" checked> <span>Facebook Reels</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="postModalIg" checked> <span>Instagram Reels</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" id="btnCancelPostModal">Huỷ</button>
+        <button class="btn btn-primary" id="btnConfirmPost">Bắt Đầu Đăng Ngay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Links Details Modal Popup -->
+  <div class="modal-backdrop" id="linksModal">
+    <div class="modal-box" style="max-width: 650px;">
+      <div class="modal-header">
+        <div class="modal-title">🔗 Danh Sách Link Bài Đăng Đã Xuất Bản</div>
+        <button class="modal-close" id="btnCloseLinksModal">&times;</button>
+      </div>
+      <div class="modal-body" id="linksModalBody">
+        <!-- Populated dynamically by JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="btnCloseLinksModalBtn">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

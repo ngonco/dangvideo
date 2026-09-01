@@ -1,0 +1,38 @@
+# Python virtual environment
+venv/
+env/
+ENV/
+.venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Playwright & Browser user profile data (Cookies, Tokens, Sessions)
+browser_profiles/
+playwright-report/
+test-results/
+
+# Local Video Downloads (Large files)
+downloads/*.mp4
+downloads/*.webm
+downloads/*.mov
+!downloads/.gitkeep
+
+# Local SQLite Database (Local post history)
+data.db
+*.db-journal
+
+# Scratch and Temporary debug scripts
+scratch/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# IDE & OS temporary files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

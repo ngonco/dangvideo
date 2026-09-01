@@ -1,0 +1,60 @@
+{
+  "hatbuinho": {
+    "url": "https://hatbuinho.com/",
+    "username": "cun",
+    "password": "123",
+    "auto_login": true
+  },
+  "platforms": {
+    "youtube": {
+      "enabled": true,
+      "privacy": "unlisted",
+      "mark_ai": true,
+      "name": "YouTube Shorts"
+    },
+    "tiktok": {
+      "enabled": true,
+      "privacy": "private",
+      "mark_ai": true,
+      "name": "TikTok"
+    },
+    "facebook": {
+      "enabled": true,
+      "privacy": "only_me",
+      "target_type": "profile",
+      "page_name": "",
+      "mark_ai": true,
+      "name": "Facebook Reels"
+    },
+    "instagram": {
+      "enabled": true,
+      "privacy": "private",
+      "share_to_feed": false,
+      "mark_ai": true,
+      "name": "Instagram Reels"
+    }
+  },
+  "schedule": {
+    "auto_mode": false,
+    "max_posts_per_day": 3,
+    "post_time_slots": [
+      "08:00",
+      "11:30",
+      "19:30"
+    ],
+    "scan_interval_minutes": 60,
+    "min_delay_between_posts_minutes": 60
+  },
+  "cleanup": {
+    "auto_cleanup": true,
+    "retention_days": 2
+  },
+  "browser": {
+    "headless": false,
+    "user_data_dir": "browser_profiles/default"
+  },
+  "custom_caption": {
+    "prefix_text": "",
+    "append_text": "\n#hatbuinho #dao_duc #song_dep #tam_hon"
+  }
+}
