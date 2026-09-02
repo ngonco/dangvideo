@@ -81,45 +81,81 @@ class HatBuiNhoCrawler:
 
         return True
 
+    async def _ensure_history_item_open(self, item_locator) -> None:
+        """Mở <details> bằng click summary (nhìn thấy được), không chỉ gán el.open."""
+        await item_locator.scroll_into_view_if_needed()
+        await asyncio.sleep(0.35)
+        is_open = await item_locator.evaluate("el => !!el.open")
+        if not is_open:
+            await item_locator.locator("summary").first.click(force=True)
+            await asyncio.sleep(0.5)
+            await item_locator.evaluate("el => { el.open = true; }")
+        await asyncio.sleep(0.6)
+
     async def _select_highest_version_and_open_download(self, item_locator) -> int:
-        """Chọn nút Phiên bản N cao nhất rồi bấm Tải xuống đúng panel đang hiện.
+        """Click thật nút Phiên bản N cao nhất rồi bấm Tải xuống đúng panel đang hiện.
 
         Trả về số phiên bản đã chọn (1 nếu không có tab). Lỗi thì raise để vòng quét bỏ video này.
         """
-        picked = await item_locator.evaluate(
-            """el => {
-                el.open = true;
-                const tabs = Array.from(el.querySelectorAll('button.history-variant-tab'));
-                let bestN = 1;
-                let best = null;
-                for (const t of tabs) {
-                    const m = String(t.innerText || '').match(/(\\d+)/);
-                    const n = m ? parseInt(m[1], 10) : 0;
-                    if (n > bestN) { bestN = n; best = t; }
-                }
-                if (best) best.click();
-                return bestN;
-            }"""
-        )
-        version_n = int(picked or 1)
-        await asyncio.sleep(1.2)
+        await self._ensure_history_item_open(item_locator)
 
-        clicked = await item_locator.evaluate(
-            """el => {
-                const panels = Array.from(el.querySelectorAll('.hist-ver-panel'));
-                const visible = panels.find(p => !p.classList.contains('hidden')) || el;
-                const btns = Array.from(visible.querySelectorAll('button'));
-                const dl = btns.find(b => {
-                    const t = (b.innerText || '').replace(/\\s+/g, ' ').trim();
-                    return t === 'Tải xuống' || t.endsWith('Tải xuống');
-                });
-                if (!dl) return false;
-                dl.click();
-                return true;
-            }"""
-        )
-        if not clicked:
-            raise RuntimeError(f"Không thấy nút Tải xuống của Phiên bản {version_n}")
+        tabs = item_locator.locator("button.history-variant-tab")
+        try:
+            await tabs.first.wait_for(state="visible", timeout=2500)
+        except Exception:
+            pass
+
+        tab_count = await tabs.count()
+        if tab_count == 0:
+            tabs = item_locator.locator("button[id^='hvt-']")
+            tab_count = await tabs.count()
+        version_n = 1
+        tab_labels = []
+        best_idx = -1
+        best_n = 0
+
+        for i in range(tab_count):
+            tab = tabs.nth(i)
+            raw = await tab.evaluate("el => (el.textContent || el.innerText || '').replace(/\\s+/g, ' ').trim()")
+            tab_labels.append(raw or f"tab#{i}")
+            match = re.search(r"(\d+)", raw or "")
+            n = int(match.group(1)) if match else (i + 1)
+            if n >= best_n:
+                best_n = n
+                best_idx = i
+
+        if tab_count == 0:
+            logger.info("Video này không có tab Phiên bản 2/3/4 — tải bản mặc định.", "HATBUINHO")
+        else:
+            logger.info(
+                f"Tìm thấy {tab_count} tab phiên bản: {', '.join(tab_labels)}. Sẽ bấm số cao nhất.",
+                "HATBUINHO",
+            )
+            version_n = best_n or 1
+            if best_idx >= 0 and (tab_count > 1 or version_n > 1):
+                target = tabs.nth(best_idx)
+                await target.scroll_into_view_if_needed()
+                await asyncio.sleep(0.45)
+                await target.click(timeout=8000)
+                logger.info(f"Đã click chuột vào '{tab_labels[best_idx]}' (Phiên bản {version_n}).", "HATBUINHO")
+                await asyncio.sleep(1.2)
+            else:
+                logger.info("Chỉ có Phiên bản 1 — không cần đổi tab.", "HATBUINHO")
+
+        visible_panel = item_locator.locator(".hist-ver-panel:not(.hidden)")
+        if await visible_panel.count() > 0:
+            dl = visible_panel.locator("button").filter(has_text="Tải xuống").first
+        else:
+            dl = item_locator.locator("button").filter(has_text="Tải xuống").first
+
+        try:
+            await dl.wait_for(state="visible", timeout=8000)
+            await dl.scroll_into_view_if_needed()
+            await asyncio.sleep(0.35)
+            await dl.click(timeout=8000)
+        except Exception as click_ex:
+            raise RuntimeError(f"Không thấy nút Tải xuống của Phiên bản {version_n}: {click_ex}") from click_ex
+
         logger.info(f"Đã chọn Phiên bản {version_n} (cao nhất) rồi bấm Tải xuống.", "HATBUINHO")
         return version_n
 
