@@ -27,8 +27,8 @@ DB_PATH = os.path.join(SYSTEM_DIR, "data.db")
 DEFAULT_CONFIG = {
     "hatbuinho": {
         "url": "https://hatbuinho.com/",
-        "username": "cun",
-        "password": "123",
+        "username": "",
+        "password": "",
         "auto_login": True
     },
     "platforms": {

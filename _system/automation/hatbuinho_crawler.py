@@ -83,8 +83,8 @@ class HatBuiNhoCrawler:
 
     async def login_if_needed(self, page: Page) -> bool:
         hat_config = config_mgr.get("hatbuinho", {})
-        username = hat_config.get("username", "cun")
-        password = hat_config.get("password", "123")
+        username = (hat_config.get("username") or "").strip()
+        password = hat_config.get("password") or ""
 
         logger.info(f"Kiểm tra session HatBuiNho (cookies trước, User: {username})...", "HATBUINHO")
         await page.goto(self.base_url, wait_until="domcontentloaded", timeout=45000)
@@ -99,10 +99,15 @@ class HatBuiNhoCrawler:
 
         login_btn = page.locator('button:has-text("Đăng nhập")').first
         if await login_btn.is_visible():
+            if not username or not password:
+                logger.warning(
+                    "Chưa có tài khoản HatBuiNho trong Dashboard. Điền tài khoản/mật khẩu rồi thử lại.",
+                    "HATBUINHO",
+                )
+                return False
             logger.info("Chưa đăng nhập, tiến hành đăng nhập tự động...", "HATBUINHO")
             await login_btn.click()
             await asyncio.sleep(1)
-
             await page.fill('input#email', username)
             await page.fill('input#password', password)
 

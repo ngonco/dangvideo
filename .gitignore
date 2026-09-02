@@ -24,6 +24,15 @@ downloads/*.mov
 .env
 .env.local
 
+# Local app config with HatBuiNho password (commit config.example.json instead)
+_system/config.json
+config.json
+
+# Packaged exe — publish via GitHub Releases, not git
+Tu_dong_dang_video.exe
+_system/Tu_dong_dang_video.exe
+_system/dist/
+
 # Local SQLite Database (Local post history)
 data.db
 *.db-journal
