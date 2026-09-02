@@ -2,9 +2,11 @@
 
 Cach dung (sau nay chi chay file nay):
   python _system/publish_github_release.py
-  python _system/publish_github_release.py --tag v1.2.0
   publish_github_release.bat
-  publish_github_release.bat v1.2.0
+
+Mac dinh: tang so giua TRUOC khi dong goi (1.2.0 -> 1.3.0 -> 1.4.0).
+Tag da co tren GitHub thi tang tiep den khi trong. Khong ghi de.
+--tag chi dung khi muon chi dinh so cu the (khong tu tang).
 
 Khong commit: .exe, config.json, .env, data.db, browser_profiles.
 Khong in token GitHub.
@@ -14,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -61,8 +64,12 @@ def run(cmd: list[str], cwd: str = ROOT, check: bool = True, capture: bool = Fal
     )
 
 
+def version_path() -> str:
+    return os.path.join(HERE, "VERSION")
+
+
 def read_version_file() -> str:
-    path = os.path.join(HERE, "VERSION")
+    path = version_path()
     if not os.path.isfile(path):
         die("Khong tim thay _system/VERSION")
     value = open(path, encoding="utf-8").read().strip().split()[0]
@@ -71,11 +78,64 @@ def read_version_file() -> str:
     return value
 
 
+def parse_semver(raw: str) -> tuple[int, int, int]:
+    value = raw.strip()
+    if value.lower().startswith("v"):
+        value = value[1:]
+    parts = (value.split(".") + ["0", "0", "0"])[:3]
+    nums = []
+    for p in parts:
+        try:
+            nums.append(int(p))
+        except ValueError:
+            nums.append(0)
+    return nums[0], nums[1], nums[2]
+
+
+def format_semver(major: int, minor: int, patch: int) -> str:
+    return f"{major}.{minor}.{patch}"
+
+
+def bump_minor(ver: str) -> str:
+    major, minor, _patch = parse_semver(ver)
+    return format_semver(major, minor + 1, 0)
+
+
+def write_version(ver: str) -> None:
+    with open(version_path(), "w", encoding="utf-8", newline="\n") as f:
+        f.write(ver.strip() + "\n")
+    html_path = os.path.join(HERE, "static", "index.html")
+    if os.path.isfile(html_path):
+        text = open(html_path, encoding="utf-8").read()
+        updated, n = re.subn(
+            r'(id="appVersion">Bản\s+)[^<]+',
+            r"\g<1>" + ver,
+            text,
+            count=1,
+        )
+        if n:
+            open(html_path, "w", encoding="utf-8", newline="\n").write(updated)
+
+
 def normalize_tag(raw: str | None) -> str:
     value = (raw or "").strip() or read_version_file()
     if value.lower().startswith("v"):
         return "v" + value[1:]
     return "v" + value
+
+
+def pick_next_tag(token: str) -> tuple[str, str]:
+    """Tang so giua, roi tang tiep neu tag GitHub da ton tai. Tra ve (version, tag)."""
+    ver = bump_minor(read_version_file())
+    tag = "v" + ver
+    for _ in range(50):
+        if not release_exists(token, tag):
+            return ver, tag
+        _print(f"Tag {tag} da co Release, tang so giua...")
+        ver = bump_minor(ver)
+        tag = "v" + ver
+    die("Khong tim duoc tag trong sau 50 lan tang minor.")
+    return ver, tag
 
 
 def git_out(*args: str) -> str:
@@ -270,18 +330,30 @@ def shutil_which(name: str) -> str | None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Dong goi exe va tao GitHub Release.")
-    parser.add_argument("tag", nargs="?", help="Vi du: v1.2.0 (mac dinh = _system/VERSION)")
-    parser.add_argument("--tag", dest="tag_opt", help="Ghi de tag, vi du v1.2.0")
+    parser.add_argument("tag", nargs="?", help="Chi dinh tag, vi du v1.3.0 (bo qua tu tang)")
+    parser.add_argument("--tag", dest="tag_opt", help="Chi dinh tag, vi du v1.3.0")
     parser.add_argument("--notes", default=DEFAULT_NOTES, help="Mo ta Release")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    tag = normalize_tag(args.tag_opt or args.tag)
-    _print(f"Phat hanh {tag} cho {REPO_SLUG}")
     os.chdir(ROOT)
     assert_repo_and_branch()
+    explicit = (args.tag_opt or args.tag or "").strip()
+    token = github_token()
+    if explicit:
+        tag = normalize_tag(explicit)
+        ver = tag[1:] if tag.lower().startswith("v") else tag
+        if release_exists(token, tag):
+            die(f"Tag {tag} da co Release. Bo --tag de script tu tang so giua.")
+        write_version(ver)
+        _print(f"Dung tag chi dinh {tag}. Ghi VERSION={ver} truoc khi dong goi.")
+    else:
+        ver, tag = pick_next_tag(token)
+        write_version(ver)
+        _print(f"Tu tang VERSION -> {ver} (tag {tag}) truoc khi dong goi.")
+    _print(f"Phat hanh {tag} cho {REPO_SLUG}")
     exe = build_exe()
     commit_and_push(tag)
     publish_release(tag, exe, args.notes.strip() + "\n")

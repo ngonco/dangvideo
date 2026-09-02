@@ -94,7 +94,7 @@ Auto_Dang_video/
     ├── .env                    # VILAO_API_KEY — gitignore
     ├── .env.example            # Mẫu public
     ├── data.db                 # SQLite local — gitignore
-    ├── VERSION                 # Số phiên bản (Dashboard + GitHub Release)
+    ├── VERSION                 # Số phiên bản; publish tự tăng số giữa (1.2.0 → 1.3.0)
     ├── SYSTEM_MAP.MD           # Tài liệu này
     ├── build_exe.py           # PyInstaller onefile (add-data: static + config.example.json + VERSION)
     ├── build_exe.bat
@@ -153,22 +153,25 @@ Không làm tay từng bước. Sau khi sửa code, **chỉ chạy**:
 python _system/publish_github_release.py
 ```
 
-hoặc click [`_system/publish_github_release.bat`](publish_github_release.bat). Tag lấy từ [`_system/VERSION`](VERSION) (thêm tiền tố `v`). Muốn chỉ định tag:
+hoặc click [`_system/publish_github_release.bat`](publish_github_release.bat).
+
+**Tự tăng version:** mỗi lần chạy (không `--tag`) script tăng **số giữa trước khi đóng gói**: `1.2.0` → `1.3.0` → `1.4.0`. Ghi `_system/VERSION` và nhãn Dashboard. Tag GitHub đã có thì tăng tiếp đến khi trống. Không ghi đè Release cũ.
+
+Muốn chỉ định số (không tự tăng):
 
 ```
-python _system/publish_github_release.py --tag v1.2.0
-publish_github_release.bat v1.2.0
+python _system/publish_github_release.py --tag v1.5.0
 ```
 
 Script lần lượt:
 
 1. Kiểm tra repo `ngonco/dangvideo`, nhánh `main`.
-2. Đóng gói `Tu_dong_dang_video.exe` bằng `build_exe.py` (`--noconsole --onefile`; `--add-data config.example.json` + `VERSION` — không nhét mật khẩu local).
+2. Tự tăng VERSION (số giữa) rồi đóng gói `Tu_dong_dang_video.exe` bằng `build_exe.py` (`--noconsole --onefile`; `--add-data config.example.json` + `VERSION` — không nhét mật khẩu local). Dashboard trong `.exe` hiện đúng số mới.
 3. `git add` mã nguồn (gitignore chặn cookie/mật khẩu/.exe) → commit nếu có thay đổi → `git push origin main`.
-4. Tạo GitHub Release, đính `.exe`. Tag đã có thì **dừng**, không ghi đè. Tăng số trong `_system/VERSION` rồi chạy lại.
+4. Tạo GitHub Release, đính `.exe`. Không ghi đè tag cũ.
 5. In link `releases/latest`.
 
-Trước khi chạy: sửa `_system/VERSION` (một dòng, ví dụ `1.2.0`). Dashboard đọc file này qua `/api/system/version`.
+Không cần sửa `_system/VERSION` tay. Dashboard đọc file này qua `/api/system/version`.
 
 Không `git add` các mục gitignore dưới đây. Không in token GitHub. User lấy file từ Releases, không từ git.
 
