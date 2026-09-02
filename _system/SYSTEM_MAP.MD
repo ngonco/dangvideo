@@ -276,6 +276,7 @@ Một trang: 3 nút (Bật/Tắt tự động, Hàng loạt, Đăng 1 video ngay
 
 ### Quy Tắc 7: HatBuiNho cookie-first
 - Có `#btn_view_history` thì không điền form. Thiếu username/password trên Dashboard thì không spam login. Đóng Đã đọc → Video → tab Đã xong.
+- **Phiên bản:** luôn bấm `.history-variant-tab` số cao nhất (Phiên bản 2/3/4/5 nếu có), rồi Tải xuống trong panel đang hiện, rồi `#btn_confirm_download_2`. Lỗi → bỏ video đó, sang video Chưa tải xuống tiếp theo (không lui về bản 1).
 
 ### Quy Tắc 8: AI Vilao
 - **Khi tải:** `suggest_popular_hashtags` — 3–5 hashtag phổ biến, gộp với kho đạo lý (`#luatnhanqua`, `#loiphatday`…). Thiếu `VILAO_API_KEY` → chỉ kho đạo lý, không chặn tải. Cấm `#hatbuinho` / chữ ký thương hiệu (`custom_caption.append_text` mặc định trống).

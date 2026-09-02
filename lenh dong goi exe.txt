@@ -1,0 +1,1 @@
+python _system/publish_github_release.py

@@ -81,6 +81,48 @@ class HatBuiNhoCrawler:
 
         return True
 
+    async def _select_highest_version_and_open_download(self, item_locator) -> int:
+        """Chọn nút Phiên bản N cao nhất rồi bấm Tải xuống đúng panel đang hiện.
+
+        Trả về số phiên bản đã chọn (1 nếu không có tab). Lỗi thì raise để vòng quét bỏ video này.
+        """
+        picked = await item_locator.evaluate(
+            """el => {
+                el.open = true;
+                const tabs = Array.from(el.querySelectorAll('button.history-variant-tab'));
+                let bestN = 1;
+                let best = null;
+                for (const t of tabs) {
+                    const m = String(t.innerText || '').match(/(\\d+)/);
+                    const n = m ? parseInt(m[1], 10) : 0;
+                    if (n > bestN) { bestN = n; best = t; }
+                }
+                if (best) best.click();
+                return bestN;
+            }"""
+        )
+        version_n = int(picked or 1)
+        await asyncio.sleep(1.2)
+
+        clicked = await item_locator.evaluate(
+            """el => {
+                const panels = Array.from(el.querySelectorAll('.hist-ver-panel'));
+                const visible = panels.find(p => !p.classList.contains('hidden')) || el;
+                const btns = Array.from(visible.querySelectorAll('button'));
+                const dl = btns.find(b => {
+                    const t = (b.innerText || '').replace(/\\s+/g, ' ').trim();
+                    return t === 'Tải xuống' || t.endsWith('Tải xuống');
+                });
+                if (!dl) return false;
+                dl.click();
+                return true;
+            }"""
+        )
+        if not clicked:
+            raise RuntimeError(f"Không thấy nút Tải xuống của Phiên bản {version_n}")
+        logger.info(f"Đã chọn Phiên bản {version_n} (cao nhất) rồi bấm Tải xuống.", "HATBUINHO")
+        return version_n
+
     async def login_if_needed(self, page: Page) -> bool:
         hat_config = config_mgr.get("hatbuinho", {})
         username = (hat_config.get("username") or "").strip()
@@ -308,17 +350,7 @@ class HatBuiNhoCrawler:
 
                     logger.info(f"Xử lý video #{idx+1} ({'Video mới nhất' if use_latest else 'Chưa tải xuống'}): '{raw_script[:60]}...'", "HATBUINHO")
 
-                    # Open details and trigger download modal
-                    await item_locator.evaluate("""el => {
-                        el.open = true;
-                        const btns = el.querySelectorAll('button');
-                        for (let b of btns) {
-                            if (b.innerText.includes('Tải xuống')) {
-                                b.click();
-                                break;
-                            }
-                        }
-                    }""")
+                    await self._select_highest_version_and_open_download(item_locator)
                     await asyncio.sleep(2)
 
                     # Wait for download modal #download_reminder_modal
