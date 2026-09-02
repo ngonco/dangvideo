@@ -28,22 +28,37 @@ def get_chromium_executable_path() -> Optional[str]:
                         return p
     return None
 
+def _mute_audio_enabled() -> bool:
+    return bool(config_mgr.get("browser", {}).get("mute_audio", True))
+
+
+def _headless_enabled() -> bool:
+    return bool(config_mgr.get("browser", {}).get("headless", True))
+
+
 class BrowserEngine:
     def __init__(self):
         self.playwright: Optional[Playwright] = None
         self.context: Optional[BrowserContext] = None
         self.is_headless: Optional[bool] = None
+        self.is_muted: Optional[bool] = None
         self._lock = asyncio.Lock()
 
     async def get_context(self, headless: Optional[bool] = None, profile_name: str = "default") -> BrowserContext:
         async with self._lock:
             if headless is None:
-                headless = config_mgr.get("browser", {}).get("headless", False)
+                headless = _headless_enabled()
+            mute_audio = _mute_audio_enabled()
 
             if self.context:
                 try:
-                    if self.is_headless != headless:
-                        logger.info(f"Thay đổi trạng thái hiển thị trình duyệt sang Headless={headless}...", "BROWSER")
+                    headless_changed = self.is_headless != headless
+                    mute_changed = self.is_muted is not None and self.is_muted != mute_audio
+                    if headless_changed or mute_changed:
+                        logger.info(
+                            f"Thay đổi trình duyệt (Headless={headless}, Mute={mute_audio})...",
+                            "BROWSER",
+                        )
                         await self.context.close()
                         self.context = None
                     elif len(self.context.pages) > 0 or not self.context.is_closed():
@@ -57,22 +72,29 @@ class BrowserEngine:
             user_data_dir = os.path.join(PROFILES_DIR, profile_name)
             os.makedirs(user_data_dir, exist_ok=True)
 
-            logger.info(f"Khởi động trình duyệt Playwright (Profile: {profile_name}, Headless: {headless})...", "BROWSER")
+            logger.info(
+                f"Khởi động trình duyệt Playwright (Profile: {profile_name}, Headless: {headless}, Mute={mute_audio})...",
+                "BROWSER",
+            )
 
             exec_path = get_chromium_executable_path()
+            chrome_args = [
+                "--start-maximized",
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-infobars",
+                "--window-position=50,50",
+                "--window-size=1400,900",
+            ]
+            if mute_audio:
+                chrome_args.append("--mute-audio")
+
             launch_kwargs = {
                 "user_data_dir": user_data_dir,
                 "headless": headless,
                 "accept_downloads": True,
-                "viewport": None,  # Use real screen size
-                "args": [
-                    "--start-maximized",
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-infobars",
-                    "--window-position=50,50",
-                    "--window-size=1400,900"
-                ],
+                "viewport": {"width": 1400, "height": 900} if headless else None,
+                "args": chrome_args,
                 "permissions": ["clipboard-read", "clipboard-write", "notifications"]
             }
             if exec_path:
@@ -81,6 +103,7 @@ class BrowserEngine:
             # Launch persistent context with foreground window flags
             self.context = await self.playwright.chromium.launch_persistent_context(**launch_kwargs)
             self.is_headless = headless
+            self.is_muted = mute_audio
             return self.context
 
     async def get_page(self, context: Optional[BrowserContext] = None) -> Page:
@@ -153,6 +176,8 @@ class BrowserEngine:
                 except Exception:
                     pass
                 self.context = None
+            self.is_headless = None
+            self.is_muted = None
             if self.playwright:
                 try:
                     await self.playwright.stop()

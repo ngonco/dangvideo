@@ -142,8 +142,7 @@ class WorkflowManager:
                     page = None
 
                     try:
-                        # Ensure browser and page are active for each platform (luôn mở cửa sổ thật)
-                        ctx = await browser_engine.get_context(headless=False)
+                        ctx = await browser_engine.get_context()
                         page = await browser_engine.get_page(ctx)
 
                         if plat == "youtube":

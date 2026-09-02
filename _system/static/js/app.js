@@ -3,6 +3,9 @@
 // ==========================================================================
 
 let isAutoMode = true;
+let isMuteAudio = true;
+let isShowBrowser = false;
+let currentBrowserConfig = { headless: true, mute_audio: true, user_data_dir: "browser_profiles/default" };
 let currentTimeSlots = ["08:00", "11:30", "19:30"];
 let socket = null;
 let userManuallyToggledLogin = false;
@@ -55,6 +58,16 @@ function setupEventListeners() {
     const btnPostNow = document.getElementById('btnPostNow');
     if (btnPostNow) {
         btnPostNow.addEventListener('click', runWorkflowNow);
+    }
+
+    const btnMuteAudio = document.getElementById('btnMuteAudio');
+    if (btnMuteAudio) {
+        btnMuteAudio.addEventListener('click', toggleMuteAudio);
+    }
+
+    const btnShowBrowser = document.getElementById('btnShowBrowser');
+    if (btnShowBrowser) {
+        btnShowBrowser.addEventListener('click', toggleShowBrowser);
     }
 
     // Nút Thêm Mốc Giờ Hẹn Đăng
@@ -124,19 +137,32 @@ async function fetchConfigAndState() {
     try {
         const res = await fetch('/api/config');
         const data = await res.json();
-        if (data.config) {
-            isAutoMode = data.config.schedule?.auto_mode !== false;
+        const cfg = (data && data.config && data.config.schedule) ? data.config : data;
+        if (cfg) {
+            isAutoMode = cfg.schedule?.auto_mode !== false;
             updateHeroUI(isAutoMode);
 
-            if (data.config.schedule?.post_time_slots) {
-                currentTimeSlots = data.config.schedule.post_time_slots;
+            if (cfg.schedule?.post_time_slots) {
+                currentTimeSlots = cfg.schedule.post_time_slots;
                 renderTimeSlots();
             }
 
+            if (cfg.browser) {
+                currentBrowserConfig = {
+                    headless: cfg.browser.headless !== false,
+                    mute_audio: cfg.browser.mute_audio !== false,
+                    user_data_dir: cfg.browser.user_data_dir || "browser_profiles/default"
+                };
+            }
+            isMuteAudio = currentBrowserConfig.mute_audio !== false;
+            isShowBrowser = currentBrowserConfig.headless === false;
+            updateMuteUI(isMuteAudio);
+            updateShowBrowserUI(isShowBrowser);
+
             // Điền form HatBuiNho
-            if (data.config.hatbuinho) {
-                document.getElementById('hbnUsername').value = data.config.hatbuinho.username || '';
-                document.getElementById('hbnPassword').value = data.config.hatbuinho.password || '';
+            if (cfg.hatbuinho) {
+                document.getElementById('hbnUsername').value = cfg.hatbuinho.username || '';
+                document.getElementById('hbnPassword').value = cfg.hatbuinho.password || '';
             }
         }
     } catch (e) {
@@ -177,6 +203,111 @@ function updateHeroUI(autoRunning) {
         btnMain.innerText = 'BẬT / TẮT TỰ ĐỘNG';
         btnSub.innerText = 'Đăng tự động mỗi ngày 1 lần (Đang TẮT)';
     }
+}
+
+function updateMuteUI(muted) {
+    isMuteAudio = muted !== false;
+    const btn = document.getElementById('btnMuteAudio');
+    const icon = document.getElementById('btnMuteIcon');
+    const main = document.getElementById('btnMuteMainText');
+    const sub = document.getElementById('btnMuteSubText');
+    if (!btn) return;
+
+    if (isMuteAudio) {
+        btn.classList.remove('is-unmuted');
+        if (icon) icon.innerText = '🔇';
+        if (main) main.innerText = 'TẮT TIẾNG TRÌNH DUYỆT';
+        if (sub) sub.innerText = 'Đang BẬT — mọi cửa sổ Playwright im lặng';
+    } else {
+        btn.classList.add('is-unmuted');
+        if (icon) icon.innerText = '🔊';
+        if (main) main.innerText = 'TẮT TIẾNG TRÌNH DUYỆT';
+        if (sub) sub.innerText = 'Đang TẮT — trình duyệt có tiếng';
+    }
+}
+
+function applyBrowserConfig(browser) {
+    currentBrowserConfig = {
+        headless: browser.headless !== false,
+        mute_audio: browser.mute_audio !== false,
+        user_data_dir: browser.user_data_dir || "browser_profiles/default"
+    };
+    isMuteAudio = currentBrowserConfig.mute_audio !== false;
+    isShowBrowser = currentBrowserConfig.headless === false;
+    updateMuteUI(isMuteAudio);
+    updateShowBrowserUI(isShowBrowser);
+}
+
+function updateShowBrowserUI(shown) {
+    isShowBrowser = shown === true;
+    const btn = document.getElementById('btnShowBrowser');
+    const icon = document.getElementById('btnShowBrowserIcon');
+    const main = document.getElementById('btnShowBrowserMainText');
+    const sub = document.getElementById('btnShowBrowserSubText');
+    if (!btn) return;
+
+    if (isShowBrowser) {
+        btn.classList.add('is-shown');
+        if (icon) icon.innerText = '👁️';
+        if (main) main.innerText = 'HIỂN THỊ QUÁ TRÌNH ĐĂNG';
+        if (sub) sub.innerText = 'Đang BẬT — mở cửa sổ để xem từng bước';
+    } else {
+        btn.classList.remove('is-shown');
+        if (icon) icon.innerText = '🙈';
+        if (main) main.innerText = 'HIỂN THỊ QUÁ TRÌNH ĐĂNG';
+        if (sub) sub.innerText = 'Đang TẮT — đăng ẩn, không mở cửa sổ';
+    }
+}
+
+async function saveBrowserConfig(partial, successMessage) {
+    currentBrowserConfig = {
+        headless: currentBrowserConfig.headless !== false,
+        mute_audio: currentBrowserConfig.mute_audio !== false,
+        user_data_dir: currentBrowserConfig.user_data_dir || "browser_profiles/default",
+        ...partial
+    };
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ browser: currentBrowserConfig })
+        });
+        const data = await res.json();
+        if (data.success) {
+            if (data.config && data.config.browser) {
+                applyBrowserConfig(data.config.browser);
+            } else {
+                applyBrowserConfig(currentBrowserConfig);
+            }
+            if (successMessage) showToast(successMessage, 'success');
+            return true;
+        }
+        showToast('❌ Không lưu được cấu hình trình duyệt.', 'error');
+        return false;
+    } catch (e) {
+        showToast('❌ Không lưu được cấu hình trình duyệt.', 'error');
+        return false;
+    }
+}
+
+async function toggleMuteAudio() {
+    const nextMuted = !isMuteAudio;
+    await saveBrowserConfig(
+        { mute_audio: nextMuted },
+        nextMuted
+            ? '🔇 Đã tắt tiếng trình duyệt Playwright (đăng nhập, tải, đăng).'
+            : '🔊 Đã bật tiếng trình duyệt Playwright.'
+    );
+}
+
+async function toggleShowBrowser() {
+    const nextShown = !isShowBrowser;
+    await saveBrowserConfig(
+        { headless: !nextShown },
+        nextShown
+            ? '👁️ Đã bật hiện cửa sổ khi tải và đăng video.'
+            : '🙈 Đã ẩn cửa sổ đăng video (chạy ẩn). Nút đăng nhập vẫn mở cửa sổ.'
+    );
 }
 
 async function toggleScheduler() {
@@ -701,8 +832,8 @@ async function fetchSystemVersion() {
         const res = await fetch('/api/system/version');
         const data = await res.json();
         const tag = document.getElementById('appVersion');
-        if (tag && data.commit) {
-            tag.innerText = `Bản: ${data.commit}`;
+        if (tag) {
+            tag.innerText = `Bản ${data.version || data.commit || '1.2.0'}`;
         }
     } catch (e) {}
 }

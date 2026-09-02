@@ -51,7 +51,8 @@
     "retention_days": 2
   },
   "browser": {
-    "headless": false,
+    "headless": true,
+    "mute_audio": true,
     "user_data_dir": "browser_profiles/default"
   },
   "schedule_publish": {

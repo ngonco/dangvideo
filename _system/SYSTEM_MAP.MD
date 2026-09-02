@@ -1,27 +1,28 @@
-# 🗺️ SYSTEM_MAP.MD — SƠ ĐỒ HỆ THỐNG & QUY TẮC PHÁT TRIỂN
+# SYSTEM_MAP.MD — SƠ ĐỒ HỆ THỐNG & QUY TẮC PHÁT TRIỂN
 
 > [!IMPORTANT]
-> ### 🛑 QUY TẮC ĐẦU BẢNG: BẮT BUỘC ĐỌC KỸ TRƯỚC KHI SỬA ĐỔI HOẶC NÂNG CẤP MÃ NGUỒN!
-> Bất kỳ Lập trình viên hoặc AI Agent nào khi tiếp nhận dự án này **BẮT BUỘC PHẢI ĐỌC TOÀN BỘ TÀI LIỆU NÀY** trước khi chỉnh sửa bất kỳ tệp tin nào.
-> 1. **KHÔNG TỰ Ý THAY ĐỔI CƠ CHẾ CHỌN SELECTOR** nếu chưa kiểm tra song ngữ (Anh - Việt) và kiểm tra lớp phủ popup (`react-joyride`, `dialog-scrim`, `reels notice`).
-> 2. **LUÔN BẢO TOÀN CHẾ ĐỘ TEST (PRIVATE / UNLISTED / ONLY ME / ONLY YOU)** khi thêm mới hoặc kiểm thử tính năng đăng bài.
-> 3. **CHỐNG ĐĂNG TRÙNG TUYỆT ĐỐI:** Mọi video sau khi đăng phải được cập nhật trạng thái `posted` và không bao giờ được chọn đăng lại.
-> 4. **BỘ LỌC AN TOÀN TRÁNH VIDEO ĐANG SỬA DỞ:** Ở chế độ tự động hàng ngày, bắt buộc chỉ tải video tạo từ ngày hôm trước trở về trước (`exclude_today = True`).
-> 5. **MỌI THAO TÁC SỬA CODE PHẢI CHẠY KIỂM THỬ TRỰC TIẾP TRÊN TRÌNH DUYỆT THỰC TẾ** (`test_all_platforms.py` hoặc chạy `.exe` test port) để xác nhận không gây lỗi hồi quy.
+> ### QUY TẮC ĐẦU BẢNG: BẮT BUỘC ĐỌC KỸ TRƯỚC KHI SỬA ĐỔI HOẶC NÂNG CẤP MÃ NGUỒN
+> 1. **KHÔNG TỰ Ý THAY ĐỔI CƠ CHẾ CHỌN SELECTOR** nếu chưa kiểm tra song ngữ (Anh - Việt) và lớp phủ popup (`react-joyride`, `dialog-scrim`, dialog Instagram).
+> 2. **LUỒNG SẢN XUẤT:** YouTube / TikTok / Facebook hẹn native **công khai 10:00 sáng mai**. Instagram web **Share ngay** (Bài viết). Không Unlisted / Only you / Only me.
+> 3. **CHỐNG ĐĂNG TRÙNG:** Video sau khi đăng cập nhật `posted` và không được chọn đăng lại.
+> 4. **BỘ LỌC AN TOÀN:** Chế độ tự động hàng ngày chỉ tải video tạo **trước hôm nay** (`exclude_today = True`).
+> 5. **KIỂM THỬ TRÊN TRÌNH DUYỆT THẬT** (`test_*_retry.py` / `test_full_suite.py` hoặc `.exe`).
+> 6. **KHÔNG ĐẨY LÊN GITHUB:** cookie / `browser_profiles`, `.env`, `config.json` (mật khẩu), `data.db`, `.exe`. User tải `.exe` từ **GitHub Releases**, không từ git.
 
 ---
 
-## 📑 MỤC LỤC
-1. [Sơ Đồ Kiến Trúc Hệ Thống (Architecture Diagram)](#1-sơ-đồ-kiến-trúc-hệ-thống)
-2. [Bản Đồ Cấu Trúc File & Vai Trò Thực Tế (File Directory Map)](#2-bản-đồ-cấu-trúc-file--vai-trò-thực-tế)
-3. [Hai Chế Độ Đăng & Luồng Hoạt Động Cốt Lõi (Core Workflows)](#3-hai-chế-độ-đăng--luồng-hoạt-động-cốt-lõi)
-4. [Hệ Thống Kho Hàng Đợi FIFO & Chống Đăng Trùng (Queue & Deduplication)](#4-hệ-thống-kho-hàng-đợi-fifo--chống-đăng-trùng)
-5. [Module Độc Lập Báo Cáo Email (Email Reporter Module)](#5-module-độc-lập-báo-cáo-email)
-6. [Danh Sách REST API & WebSocket Realtime (Endpoints Map)](#6-danh-sách-rest-api--websocket-realtime)
-7. [Giao Diện Phong Cách Mộc & 3 Nút Điều Khiển (Rustic UI & Hero Controls)](#7-giao-diện-phong-cách-mộc--3-nút-điều-khiển)
-8. [Các Quy Tắc Kỹ Thuật Bất Biến (Golden Technical Rules)](#8-các-quy-tắc-kỹ-thuật-bất-biến)
-9. [Cấu Trúc Cơ Sở Dữ Liệu & Cấu Hình (Database & Config Schema)](#9-cấu-trúc-cơ-sở-dữ-liệu--cấu-hình)
-10. [Bảng Tra Cứu & Khắc Phục Lỗi Nhanh (Troubleshooting Cheatsheet)](#10-bảng-tra-cứu--khắc-phục-lỗi-nhanh)
+## MỤC LỤC
+1. [Sơ Đồ Kiến Trúc Hệ Thống](#1-sơ-đồ-kiến-trúc-hệ-thống)
+2. [Bản Đồ Cấu Trúc File](#2-bản-đồ-cấu-trúc-file)
+3. [GitHub Release — User tải về & chống leak](#3-github-release--user-tải-về--chống-leak)
+4. [Hai Chế Độ Đăng & Luồng Cốt Lõi](#4-hai-chế-độ-đăng--luồng-cốt-lõi)
+5. [Kho Hàng Đợi FIFO & Chống Đăng Trùng](#5-hệ-thống-kho-hàng-đợi-fifo--chống-đăng-trùng)
+6. [Báo Cáo Email](#6-module-độc-lập-báo-cáo-email)
+7. [REST API & WebSocket](#7-danh-sách-rest-api--websocket)
+8. [Giao Diện Dashboard](#8-giao-diện-dashboard)
+9. [Quy Tắc Kỹ Thuật Bất Biến](#9-các-quy-tắc-kỹ-thuật-bất-biến)
+10. [Cơ Sở Dữ Liệu & Cấu Hình](#10-cấu-trúc-cơ-sở-dữ-liệu--cấu-hình)
+11. [Khắc Phục Lỗi Nhanh](#11-bảng-tra-cứu--khắc-phục-lỗi-nhanh)
 
 ---
 
@@ -29,35 +30,31 @@
 
 ```mermaid
 graph TD
-    User([👤 Người Dùng]) <--> Tray[🟣 System Tray: Tu_dong_dang_video.exe]
-    Tray <--> Dashboard[🌿 Web Dashboard Phong Cách Mộc: http://127.0.0.1:8000]
-    
-    subgraph Core Backend [FastAPI Server & Background Engine - _system/app.py]
-        API[FastAPI REST API & WebSocket Stream]
-        Scheduler[⏰ APScheduler - task_scheduler.py]
-        WorkflowMgr[⚙️ Workflow Manager - workflow_manager.py]
-        DB[(🗄️ SQLite Database - data.db)]
-        ConfigMgr[📝 Config Manager - config.json]
-        Logger[📜 Broadcast Logger - logger.py]
-        HashtagMgr[🏷️ Hashtag Manager - hashtag_manager.py]
-        EmailReporter[📧 Email Reporter - email_reporter.py]
-        AutostartMgr[🚀 Autostart Manager - autostart_manager.py]
+    User([Nguoi dung]) <--> Tray[System Tray: Tu_dong_dang_video.exe]
+    Tray <--> Dashboard[Web Dashboard: http://127.0.0.1:8000]
+    GhRelease[GitHub Releases: tai .exe] --> User
+
+    subgraph CoreBackend [FastAPI - _system/app.py]
+        API[REST API va WebSocket]
+        Scheduler[APScheduler]
+        WorkflowMgr[workflow_manager.py]
+        DB[(SQLite data.db local)]
+        ConfigMgr[config.json local]
+        Logger[logger.py]
+        HashtagMgr[hashtag_manager.py]
+        EmailReporter[email_reporter.py]
     end
 
-    subgraph Browser Engine [Playwright Chromium - Persistent Context]
-        Browser[🚀 Persistent Browser: browser_profiles/default]
+    subgraph BrowserEngine [Playwright Chromium persistent]
+        Browser[browser_profiles/default - CHI TREN MAY]
     end
 
-    subgraph External Platforms [Nguồn Tải & Nền Tảng Đăng]
-        HatBuiNho[🌱 HatBuiNho.com Crawler]
-        YT[▶️ YouTube Studio - Shorts]
-        TT[🎵 TikTok Creator Center]
-        FB[📘 Facebook Professional Dashboard]
-        IG[📸 Instagram Post]
-    end
-
-    subgraph Admin Monitoring [Quản Trị Viên]
-        AdminMail[📬 Hộp Thư Admin: thv.vinh@gmail.com]
+    subgraph Platforms [Nguon tai va dang]
+        HatBuiNho[hatbuinho.com]
+        YT[YouTube Studio Shorts]
+        TT[TikTok Studio Content]
+        FB[Facebook Professional Dashboard]
+        IG[Instagram Bai viet]
     end
 
     Dashboard <--> API
@@ -66,7 +63,6 @@ graph TD
     WorkflowMgr <--> DB
     WorkflowMgr <--> ConfigMgr
     WorkflowMgr --> Logger --> Dashboard
-    
     WorkflowMgr --> Browser
     Browser <--> HatBuiNho
     Browser <--> YT
@@ -74,267 +70,259 @@ graph TD
     Browser <--> FB
     Browser <--> IG
     HashtagMgr --> WorkflowMgr
-
-    WorkflowMgr -->|🚨 Báo lỗi khẩn cấp tức thì| EmailReporter --> AdminMail
-    Scheduler -->|📊 Báo cáo tổng kết 22:00| EmailReporter --> AdminMail
+    WorkflowMgr --> EmailReporter
+    Scheduler --> EmailReporter
 ```
 
 ---
 
-## 2. BẢN ĐỒ CẤU TRÚC FILE & VAI TRÒ THỰC TẾ
+## 2. BẢN ĐỒ CẤU TRÚC FILE
 
 ```
 Auto_Dang_video/
-├── Tu_dong_dang_video.exe      # File thực thi duy nhất người dùng cần click (PyInstaller native executable)
-├── Huong_dan_su_dung.txt       # Hướng dẫn sử dụng 1-click ngắn gọn, thân thiện
-├── downloads/                  # Thư mục lưu trữ video tải về để người dùng dễ xem trực tiếp
-│   └── .gitkeep
+├── README.md                   # Link tải Releases + hướng dẫn user
+├── Huong_dan_su_dung.txt
+├── .gitignore                   # Chặn cookie, config.json, .exe, .env, data.db
+├── Tu_dong_dang_video.exe       # CHỈ trên máy / GitHub Release — KHÔNG commit git
+├── downloads/                  # Video .mp4 (gitignore nội dung)
 │
-└── _system/                    # THƯ MỤC HỆ THỐNG (Chứa toàn bộ mã nguồn & engine ngầm)
-    ├── app.py                  # Server FastAPI trung tâm, REST API, WebSocket logs, Auto-Update API
-    ├── tray_app.py             # Module System Tray Icon tím neon (pystray + FastAPI runner + Port Polling)
-    ├── config.json             # Cấu hình hệ thống (tài khoản, lịch hẹn giờ, nền tảng, dọn dẹp)
-    ├── data.db                 # SQLite Database lưu trữ video, lịch sử đăng, link bài viết và trạng thái
-    ├── requirements.txt        # Danh sách thư viện Python phụ thuộc
-    ├── SYSTEM_MAP.MD           # [TÀI LIỆU NÀY] Bản đồ hệ thống và quy tắc phát triển bắt buộc
-    ├── README.md               # Hướng dẫn cài đặt và vận hành
-    ├── run.bat                 # Script batch dự phòng khởi động ứng dụng
-    ├── bootstrap.ps1           # Engine khởi tạo môi trường (tự tải Python/Chromium nếu thiếu & chạy server)
-    ├── install.bat             # Script cài đặt môi trường
-    ├── update.bat              # Script cập nhật mã nguồn độc lập từ GitHub
-    ├── backup_to_github.bat    # Script 1-click đẩy mã nguồn mới nhất lên GitHub (ngonco/dangvideo)
-    ├── test_all_platforms.py   # Script kiểm thử độc lập luồng đăng 4 nền tảng với dữ liệu thực tế
-│
-├── core/                       # Các module hạ tầng cốt lõi
-│   ├── __init__.py
-│   ├── autostart_manager.py    # Quản lý tự khởi động cùng Windows (Startup Shortcut)
-│   ├── config_manager.py       # Đọc/ghi cấu hình config.json an toàn với fallback mặc định
-│   ├── database.py             # SQLite helper: quản lý kho video, hàng đợi FIFO, chống đăng trùng, dọn dẹp cũ
-│   ├── email_reporter.py       # Module độc lập: Gửi cảnh báo lỗi khẩn cấp tức thì & báo cáo ngày về thv.vinh@gmail.com
-│   ├── schedule_helper.py     # Tính mốc hẹn native 10:00 sáng mai; khoảng cách Instagram 3 tiếng khi chạy thật
-│   └── logger.py               # Logger trung tâm hỗ trợ stream realtime qua WebSocket và xử lý safe console
-│
-├── automation/                 # Động cơ tự động hóa trình duyệt
-│   ├── __init__.py
-│   ├── browser_engine.py       # Playwright Chromium Persistent Context & tự động phát hiện cookie đăng nhập
-│   ├── hashtag_manager.py      # Kho hashtag đạo lý + gộp 3–5 hashtag phổ biến từ Vilao khi tải (không chữ ký #hatbuinho)
-│   ├── hatbuinho_crawler.py    # Quét tải video HatBuiNho: cookie-first, bấm nút Video (#btn_view_history) rồi tab Đã xong, lọc exclude_today, Tải xuống 2; hashtag đạo lý + AI phổ biến
-│   ├── ai_fallback.py         # AI Vilao: hashtag phổ biến khi tải; chẩn đoán lỗi UI khi timeout/exception
-│   ├── workflow_manager.py     # Điều phối luồng tải video, phân phối đăng 4 kênh và kích hoạt cảnh báo lỗi
-│   │
-│   └── posters/                # Các module đăng bài cho từng nền tảng cụ thể
-│       ├── __init__.py
-│       ├── base_poster.py      # Lớp trừu tượng Poster: caption = tiêu đề + hashtags (append_text trống mặc định, không #hatbuinho)
-│       ├── youtube_poster.py   # Upload YouTube Shorts + hẹn native 10:00 sáng mai công khai
-│       ├── tiktok_poster.py    # Studio Content → Tải lên, #panel-video file, radio Lên lịch, picker 10:00 + ngày, post_video_button; chờ, làm tươi Bài đăng, Copy link
-│       ├── facebook_poster.py  # Prodash SCHEDULED: Create→Reel, 2 Next, Publish now, Date/Time, Schedule for later + Schedule footer; chờ, làm tươi, Copy link bài vừa hẹn
-│       └── instagram_poster.py # Instagram Bài viết Share ngay; sau Xong mở video, copy permalink thanh địa chỉ; chạy thật cách tối thiểu 3 tiếng/video
-│
-├── scheduler/                  # Lập lịch tự động chạy nền
-│   ├── __init__.py
-│   └── task_scheduler.py       # Lập lịch giờ vàng, quét video định kỳ, dọn dẹp 00:05, gửi báo cáo email 22:00
-│
-├── static/                     # Giao diện Web Dashboard (Phong cách Gỗ Ấm & Trà Thiền)
-│   ├── index.html              # HTML Single-Page (Hero Card, 3 Nút, Giờ Hẹn, Accordion Đăng Nhập, Lịch Sử)
-│   ├── css/
-│   │   └── style.css           # Bảng phong cách Mộc dịu mắt, chữ to rõ, bo góc êm ái cho người lớn tuổi
-│   └── js/
-│       └── app.js              # Xử lý tương tác 1 trang, quản lý mốc giờ, hàng đợi, login 1-click, WebSocket logs
-│
-├── downloads/                  # Thư mục lưu trữ các tệp video .mp4 đã tải về
-└── browser_profiles/           # Thư mục lưu phiên đăng nhập Chrome (User Data Directory)
-    └── default/                # Cookie, LocalStorage và Session của tất cả tài khoản mạng xã hội
+└── _system/
+    ├── app.py                  # FastAPI: REST, WebSocket logs
+    ├── tray_app.py             # Tray icon + uvicorn 127.0.0.1:8000
+    ├── config.json             # Local: mật khẩu HatBuiNho — gitignore
+    ├── config.example.json      # Mẫu public: username/password trống
+    ├── .env                    # VILAO_API_KEY — gitignore
+    ├── .env.example            # Mẫu public
+    ├── data.db                 # SQLite local — gitignore
+    ├── VERSION                 # Số phiên bản (Dashboard + GitHub Release)
+    ├── SYSTEM_MAP.MD           # Tài liệu này
+    ├── build_exe.py           # PyInstaller onefile (add-data: static + config.example.json + VERSION)
+    ├── build_exe.bat
+    ├── publish_github_release.py   # CÁCH PHÁT HÀNH CHÍNH THỨC: đóng gói exe + Release
+    ├── publish_github_release.bat
+    ├── run.bat
+    ├── backup_to_github.bat   # Chỉ đẩy mã nguồn (không .exe); ưu tiên dùng publish_github_release
+    ├── requirements.txt
+    ├── test_full_suite.py
+    ├── test_fb_retry.py / test_tt_retry.py / test_ig_retry.py
+    │
+    ├── core/
+    │   ├── config_manager.py   # DEFAULT_CONFIG username/password trống; đọc config.json local
+    │   ├── database.py
+    │   ├── email_reporter.py
+    │   ├── schedule_helper.py   # Native 10:00 sáng mai; Instagram min_gap_hours
+    │   ├── logger.py
+    │   └── autostart_manager.py
+    │
+    ├── automation/
+    │   ├── browser_engine.py  # Persistent Chromium, --mute-audio, profile local
+    │   ├── hashtag_manager.py   # Kho đạo lý + gộp hashtag AI khi tải
+    │   ├── hatbuinho_crawler.py
+    │   ├── ai_fallback.py      # Hashtag AI khi tải; recover UI khi lỗi
+    │   ├── workflow_manager.py
+    │   └── posters/
+    │       ├── base_poster.py  # caption = tiêu đề + hashtags; append_text mặc định trống
+    │       ├── youtube_poster.py
+    │       ├── tiktok_poster.py
+    │       ├── facebook_poster.py
+    │       └── instagram_poster.py
+    │
+    ├── scheduler/task_scheduler.py
+    ├── static/                 # Dashboard (index.html, css, js)
+    └── browser_profiles/default/  # Cookie phiên đăng nhập — gitignore, KHÔNG lên GitHub
 ```
 
 ---
 
-## 3. HAI CHẾ ĐỘ ĐĂNG & LUỒNG HOẠT ĐỘNG CỐT LÕI
+## 3. GITHUB RELEASE — USER TẢI VỀ & CHỐNG LEAK
 
-### 🟢 3.1. Chế Độ 1: Đăng Tự Động Hàng Ngày (Mỗi ngày 1 lần theo giờ hẹn)
-- **Kích hoạt:** Mặc định bật khi mở máy tính (`auto_mode = True`, `autostart = True`).
-- **Luồng hoạt động:**
-  1. Khi laptop bật lên, ứng dụng tự động chạy ngầm trong khay hệ thống (System Tray).
-  2. Đến đúng các khung giờ hẹn (`08:00`, `11:30`, `19:30`...):
-  3. `TaskScheduler` kích hoạt `_auto_process_next_video()`:
-     - Kiểm tra giới hạn số lượng bài đăng trong ngày (`posts_today < max_posts_per_day`).
-     - Tìm video chưa đăng cũ nhất trong kho SQLite (`db.get_oldest_pending_video()`).
-     - **Nếu kho rỗng:** Gọi `workflow_mgr.scan_and_download(max_items=1, force_latest=False, oldest_first=True, exclude_today=True)`:
-       - **Bộ Lọc An Toàn (`exclude_today = True`):** Tự động bỏ qua toàn bộ video tạo trong ngày hôm nay (để tránh video user vừa tạo nhưng vẫn đang chỉnh sửa dở trên web).
-       - **Chỉ tải đúng 1 video "Chưa tải xuống" cũ nhất** được tạo **từ ngày hôm trước trở về trước**.
-     - Tải file lên ngay: YouTube / TikTok / Facebook hẹn **native 10:00 sáng mai công khai**. Instagram web **không có hẹn giờ** → **Bài viết / Post, Chia sẻ ngay**, sau Xong mở video và lấy permalink thanh địa chỉ; khi chạy thật cách tối thiểu **3 tiếng**/video (test bỏ qua khoảng cách này). Mỗi lần kích hoạt chỉ 1 video — không bù hàng loạt khi máy vừa mở.
-     - Lên lịch / chia sẻ xong đổi trạng thái thành `posted` trong SQLite, **tuyệt đối không bao giờ đăng trùng lại**.
+Repo: https://github.com/ngonco/dangvideo
 
-### 📦 3.2. Chế Độ 2: Đăng Hàng Loạt Theo Lịch (Đa ngày)
-- **Kích hoạt:** Người dùng bấm nút **`[ 📦 ĐĂNG HÀNG LOẠT THEO LỊCH ]`** trên Web Dashboard.
-- **Luồng hoạt động:**
-  1. Gọi `POST /api/action/batch-download-queue`.
-  2. Hệ thống mở HatBuiNho, quét và tải **toàn bộ các video "Chưa tải xuống"** hiện có (tối đa 50 video/lần) về máy vào **Kho Hàng Đợi** (`status = 'downloaded'`).
-  3. Hệ thống tự động phân bổ: Các video này sẽ được `TaskScheduler` tự động chia đều và đăng dần vào các khung giờ hẹn mỗi ngày theo nguyên tắc FIFO mà người dùng không cần thao tác thêm.
-  4. Banner đầu trang tự cập nhật: `📦 Kho Hàng Đợi: Đang có X video trong kho (Dự kiến tự động đăng trong Y ngày tới theo các mốc giờ)`.
+### User tải và cài
 
-### ⚡ 3.3. Tác Vụ Phụ: Đăng 1 Video Ngay Lập Tức
-- **Kích hoạt:** Người dùng bấm nút **`[ ⚡ ĐĂNG 1 VIDEO NGAY ]`**.
-- **Luồng hoạt động:** Gọi `POST /api/action/run-workflow` (`mode = 'normal'`), ưu tiên video Chưa tải xuống trên HatBuiNho (hết thì tải video mới nhất) hoặc lấy video trong kho, tải lên YT/TT/FB **ngay** và hẹn native **10:00 sáng mai công khai**; Instagram **Bài viết Share ngay** rồi copy permalink thanh địa chỉ (có cổng 3 tiếng khi chạy thật).
+- **Link tải .exe:** https://github.com/ngonco/dangvideo/releases/latest
+- File: `Tu_dong_dang_video.exe` (ví dụ `v1.2.0`).
+- Click đúp → Dashboard `http://127.0.0.1:8000` → điền HatBuiNho trên Dashboard → **Mở Trình Duyệt Đăng Nhập** từng kênh một lần.
+- Mã nguồn (không gồm .exe): ZIP nhánh `main`. Copy `config.example.json` → `config.json` nếu chạy từ Python.
+
+### Phát hành bản mới — cách chính thức duy nhất
+
+Không làm tay từng bước. Sau khi sửa code, **chỉ chạy**:
+
+```
+python _system/publish_github_release.py
+```
+
+hoặc click [`_system/publish_github_release.bat`](publish_github_release.bat). Tag lấy từ [`_system/VERSION`](VERSION) (thêm tiền tố `v`). Muốn chỉ định tag:
+
+```
+python _system/publish_github_release.py --tag v1.2.0
+publish_github_release.bat v1.2.0
+```
+
+Script lần lượt:
+
+1. Kiểm tra repo `ngonco/dangvideo`, nhánh `main`.
+2. Đóng gói `Tu_dong_dang_video.exe` bằng `build_exe.py` (`--noconsole --onefile`; `--add-data config.example.json` + `VERSION` — không nhét mật khẩu local).
+3. `git add` mã nguồn (gitignore chặn cookie/mật khẩu/.exe) → commit nếu có thay đổi → `git push origin main`.
+4. Tạo GitHub Release, đính `.exe`. Tag đã có thì **dừng**, không ghi đè. Tăng số trong `_system/VERSION` rồi chạy lại.
+5. In link `releases/latest`.
+
+Trước khi chạy: sửa `_system/VERSION` (một dòng, ví dụ `1.2.0`). Dashboard đọc file này qua `/api/system/version`.
+
+Không `git add` các mục gitignore dưới đây. Không in token GitHub. User lấy file từ Releases, không từ git.
+
+### Cấm đưa lên GitHub
+
+| Mục | Lý do |
+| :--- | :--- |
+| `_system/browser_profiles/` | Cookie / session YouTube, TikTok, Facebook, Instagram, HatBuiNho |
+| `_system/config.json` | Mật khẩu HatBuiNho trên máy |
+| `_system/.env` | `VILAO_API_KEY` |
+| `_system/data.db` | Lịch sử đăng local |
+| `Tu_dong_dang_video.exe` | File lớn; phát hành qua Releases |
+| `downloads/*.mp4`, `debug_screenshots/`, `temp_record_action/` | Dữ liệu máy |
+
+Public trên git: `config.example.json` (username/password trống), `.env.example`, mã nguồn, README.
+
+`DEFAULT_CONFIG` trong `config_manager.py` cũng để username/password **trống**. Lần đầu chạy `.exe` tự tạo `config.json` local.
 
 ---
 
-## 4. HỆ THỐNG KHO HÀNG ĐỢI FIFO & CHỐNG ĐĂNG TRÙNG
+## 4. HAI CHẾ ĐỘ ĐĂNG & LUỒNG CỐT LÕI
 
-- **Nguyên lý Hàng Đợi FIFO (First-In, First-Out):**
-  - Video được chọn đăng theo thứ tự cũ nhất trước: `WHERE status = 'downloaded' ORDER BY id ASC LIMIT 1`.
-- **Cơ Chế Chống Đăng Trùng 3 Lớp Tuyệt Đối:**
-  1. *Lớp 1 (HatBuiNho Hash):* `hatbuinho_id TEXT UNIQUE` trong bảng `videos` ngăn tải trùng 1 video nhiều lần.
-  2. *Lớp 2 (Trạng thái Video):* Video sau khi đăng thành công lập tức chuyển `status = 'posted'`. Các hàm lấy hàng đợi chỉ lọc `status = 'downloaded'`.
-  3. *Lớp 3 (Lịch Sử Post History):* Ghi nhận từng bài đăng với `video_id`, `platform`, `post_url`, `status = 'success'`.
+### 4.1. Đăng tự động hàng ngày
+- Mặc định `auto_mode = true`. Tới mốc giờ (`08:00`, `11:30`, `19:30`…): 1 video/lần.
+- Kho rỗng → `scan_and_download(..., exclude_today=True)` (bỏ video tạo hôm nay).
+- YT / TT / FB: tải lên ngay, hẹn native **10:00 sáng mai công khai**. Instagram: Bài viết Share ngay; chạy thật cách **3 tiếng**.
 
----
+### 4.2. Đăng hàng loạt theo lịch
+- Nút Dashboard → `POST /api/action/batch-download-queue` (tối đa 50 video Chưa tải xuống). Scheduler đăng FIFO theo mốc giờ.
 
-## 5. MODULE ĐỘC LẬP BÁO CÁO EMAIL (`email_reporter.py`)
-
-- **Người gửi (SMTP):** `binhyentram89@gmail.com` (Gmail SSL Cổng 465).
-- **Người nhận (Admin):** `thv.vinh@gmail.com`.
-- **Định danh người gửi:** Tự động lấy `[Tài khoản HatBuiNho: {user} | Hostname: {hostname}]`.
-- **2 Tính năng chính:**
-  1. **🚨 Cảnh báo lỗi khẩn cấp tức thì (`send_error_alert`):** Gửi ngay khi có lỗi phát sinh ở bất kỳ nền tảng nào (kèm traceback và cơ chế chống spam 10 phút).
-  2. **📊 Báo cáo tổng kết ngày (`send_daily_summary`):** Tự động gửi lúc 22:00 mỗi ngày tổng hợp danh sách video đã đăng kèm link bài viết thực tế.
-- **Chạy bất đồng bộ:** Sử dụng daemon thread, không làm chậm quá trình đăng bài.
+### 4.3. Đăng 1 video ngay
+- `POST /api/action/run-workflow` (`mode=normal`): ưu tiên Chưa tải xuống (hết thì video mới nhất) hoặc kho. `enforce_ig_gap=True`. Hẹn native theo `schedule_publish.default_time` (mặc định 10:00).
 
 ---
 
-## 6. DANH SÁCH REST API & WEBSOCKET REALTIME
+## 5. HỆ THỐNG KHO HÀNG ĐỢI FIFO & CHỐNG ĐĂNG TRÙNG
 
-| Method | Đường Dẫn API | Chức Năng |
+- FIFO: `status = 'downloaded' ORDER BY id ASC LIMIT 1`.
+- 3 lớp: `hatbuinho_id UNIQUE` → `status = posted` → `post_history` theo nền tảng.
+
+---
+
+## 6. MODULE ĐỘC LẬP BÁO CÁO EMAIL
+
+- SMTP: `binhyentram89@gmail.com` (Gmail SSL 465). Admin: `thv.vinh@gmail.com`.
+- `send_error_alert` khi lỗi kênh; `send_daily_summary` lúc 22:00.
+
+---
+
+## 7. DANH SÁCH REST API & WEBSOCKET
+
+| Method | Đường dẫn | Chức năng |
 | :--- | :--- | :--- |
-| `GET` | `/` | Trả về giao diện Web Dashboard chính (`index.html`) |
-| `GET` | `/api/system/version` | Lấy thông tin phiên bản hệ thống hiện tại |
-| `GET` | `/api/config` | Đọc toàn bộ cấu hình hệ thống từ `config.json` |
-| `POST` | `/api/config` | Lưu cấu hình hệ thống |
-| `GET` | `/api/accounts/status` | Kiểm tra trạng thái cookie/session của 5 tài khoản |
-| `GET` | `/api/history` | Lấy danh sách video và lịch sử đăng bài |
-| `GET` | `/api/queue/summary` | Lấy số lượng video đang chờ và số ngày dự kiến đăng |
-| `GET` | `/api/autostart/status` | Kiểm tra trạng thái tự khởi động cùng Windows |
-| `POST` | `/api/schedule/timeslots` | Cập nhật danh sách mốc giờ hẹn và reload APScheduler |
-| `POST` | `/api/action/toggle-scheduler` | Bật / Tắt chế độ đăng tự động |
-| `POST` | `/api/action/run-workflow` | Đăng ngay 1 video tức thì |
-| `POST` | `/api/action/batch-download-queue` | Quét tải toàn bộ video chưa tải vào kho hàng đợi |
-| `POST` | `/api/action/clean-old-videos` | Dọn dẹp tệp `.mp4` cũ hơn 2 ngày |
-| `POST` | `/api/action/send-test-email` | Gửi email thử nghiệm về `thv.vinh@gmail.com` |
-| `POST` | `/api/action/open-login-browser` | Mở trình duyệt để người dùng đăng nhập tài khoản |
-| `POST` | `/api/action/toggle-autostart` | Bật / Tắt khởi động cùng Windows |
-| `POST` | `/api/action/update-system` | Kéo cập nhật mã nguồn mới nhất từ GitHub |
-| `WS` | `/ws/logs` | Stream nhật ký hoạt động realtime tới giao diện |
+| `GET` | `/` | Dashboard |
+| `GET` | `/media/{filename}` | File video trong `downloads/` |
+| `GET` | `/api/system/version` | Phiên bản |
+| `GET` | `/api/stats` | Số liệu tổng |
+| `GET` | `/api/videos` | Danh sách video kho |
+| `GET` | `/api/videos/{video_id}/history` | Lịch sử theo 1 video |
+| `GET`/`POST` | `/api/config` | Đọc/lưu `config.json` local |
+| `GET` | `/api/accounts/status` | Cookie/session các kênh |
+| `GET` | `/api/history` | Lịch sử đăng |
+| `GET` | `/api/queue/summary` | Kho hàng đợi |
+| `GET` | `/api/logs` | Nhật ký |
+| `GET`/`POST` | `/api/system/autostart` | Trạng thái / bật tắt khởi động Windows |
+| `POST` | `/api/schedule/timeslots` | Mốc giờ + reload scheduler |
+| `POST` | `/api/action/toggle-scheduler` | Bật/tắt auto |
+| `POST` | `/api/action/scan` | Quét HatBuiNho |
+| `POST` | `/api/action/post` | Đăng video đã chọn |
+| `POST` | `/api/action/run-workflow` | Đăng 1 video (ưu tiên kho / chưa tải) |
+| `POST` | `/api/action/batch-download-queue` | Tải hàng loạt vào kho |
+| `POST` | `/api/action/cleanup` / `cleanup-old-videos` | Dọn mp4 cũ |
+| `POST` | `/api/action/send-test-email` | Email thử |
+| `POST` | `/api/action/open-login` | Mở URL đăng nhập |
+| `POST` | `/api/browser/open-login/{platform}` | Mở trình duyệt persistent theo kênh |
+| `POST` | `/api/system/update` | Kéo mã nguồn GitHub |
+| `WS` | `/ws/logs` | Nhật ký realtime |
 
 ---
 
-## 7. GIAO DIỆN PHONG CÁCH MỘC & 3 NÚT ĐIỀU KHIỂN
+## 8. GIAO DIỆN DASHBOARD
 
-### 🎨 Phong Cách Gỗ Ấm & Trà Thiền (Dành cho người lớn tuổi):
-- Nền be ngà sáng dịu mắt (`#F7F4EE`), thẻ viền gỗ ấm (`#E2D9CF`), chữ màu nâu mun đậm (`#2C1810`) tương phản cao, dễ đọc.
-- Bố cục **1 Trang Cuộn Duy Nhất (Single Page)** từ trên xuống dưới.
-
-### 🎯 3 Nút Điều Khiển Tại Khối Trên Cùng (Hero Card):
-1. **`[ ⏸️ BẬT / TẮT TỰ ĐỘNG ]`** — *(Đăng tự động mỗi ngày 1 lần)*
-2. **`[ 📦 ĐĂNG HÀNG LOẠT THEO LỊCH ]`** — *(Lên lịch video nhiều ngày)*
-3. **`[ ⚡ ĐĂNG 1 VIDEO NGAY ]`** — *(Tải & đăng ngay lập tức)*
-
-### ⏰ Khung Hẹn Giờ Đăng Video (Ngay trong Hero Card):
-- Thẻ giờ to đẹp: `[ 🌅 08:00 ✕ ] [ ☀️ 11:30 ✕ ] [ 🌙 19:30 ✕ ]` + Ô chọn giờ + Nút `[ ➕ Thêm Mốc Giờ Này ]`.
-
-### 🔑 Khối Đăng Nhập Tài Khoản (Accordion Thu Gọn Thông Minh):
-- Tự động kiểm tra trạng thái (🟢 Đã Đăng Nhập / ⚪ Chưa Đăng Nhập).
-- Tự mở rộng nếu có kênh chưa kết nối, tự thu gọn khi cả 5 kênh đã sẵn sàng.
+Một trang: 3 nút (Bật/Tắt tự động, Hàng loạt, Đăng 1 video ngay), mốc giờ, accordion đăng nhập 5 kênh (HatBuiNho + 4 MXH), lịch sử, nhật ký WebSocket.
 
 ---
 
-## 8. CÁC QUY TẮC KỸ THUẬT BẤT BIẾN
+## 9. CÁC QUY TẮC KỸ THUẬT BẤT BIẾN
 
-> [!CAUTION]
-> Bất kỳ lập trình viên hoặc AI Agent nào khi chỉnh sửa mã nguồn của dự án này **BẮT BUỘC PHẢI TUÂN THỦ** các quy tắc dưới đây:
+### Quy Tắc 1: Cấm regex `i` trong selector Playwright
+- Sai: `button:has-text("Đăng" i)`. Đúng: hai locator Anh/Việt hoặc `page.evaluate`.
 
-### 🚫 Quy Tắc 1: Cấm Dùng Cờ Regex `i` Trong Selector Playwright
-- **Sai:** `page.locator('button:has-text("Đăng" i)')` — Gây crash selector parser.
-- **Đúng:** `page.locator('button:has-text("Đăng"), button:has-text("dang")')` hoặc `page.evaluate(...)`.
+### Quy Tắc 2: Overlay
+- TikTok: `_dismiss_overlays`. Instagram: `_dismiss_ig_dialogs`. YouTube: `click(force=True)` / `evaluate`.
 
-### 🛡️ Quy Tắc 2: Luôn Xử Lý Lớp Phủ Chặn Con Trỏ (Overlay / Joyride / Scrim)
-- Trên **TikTok**: Luôn gọi `_dismiss_overlays(page)` trước khi tương tác.
-- Trên **Instagram**: Luôn gọi `_dismiss_ig_dialogs(page)` để đóng popup (Got it / Not now).
-- Trên **YouTube Studio**: Sử dụng `click(force=True)` hoặc `evaluate(...)` để tránh `dialog-scrim`.
+### Quy Tắc 3: Song ngữ Anh - Việt
 
-### 🌐 Quy Tắc 3: Đảm Bảo Hỗ Trợ Đa Ngôn Ngữ (Song Ngữ Anh - Việt)
-- Mọi bộ chọn (Selectors) cho nút bấm hoặc nhãn bắt buộc phải khai báo song ngữ (Anh - Việt).
+### Quy Tắc 4: Hẹn native công khai 10:00 sáng mai (trừ Instagram)
+- **YouTube / TikTok / Facebook:** Schedule / Lên lịch ngày mai 10:00, công khai. Facebook: `#prodash-create-button` → Reel → 2 Next → Publish now → Date/Time → helper text đóng lịch → Schedule for later → Schedule footer (không Post). Copy link `aria-label="Actions for this post"`. TikTok: `tiktokstudio/content` → Tải lên → `#panel-video input[type=file]` → radio `postSchedule=schedule` → timepicker → `post_video_button` Lên lịch; copy link tab Bài đăng.
+- **Instagram:** Bài viết / Post (không Story/Reel). Không `[role=switch]`, không Cài đặt nâng cao. Share / Chia sẻ (đúng chữ, không sheet Chia sẻ bài viết). Xong / Done → mở ô lưới đầu → `page.url` (`/p/` hoặc `/reel/`). Chạy thật: `instagram.min_gap_hours=3`.
+- `schedule_publish`: `enabled=true`, `default_time=10:00`, `target_date=tomorrow`.
 
-### 🔒 Quy Tắc 4: Hẹn Native Công Khai 10:00 Sáng Mai (trừ Instagram)
-- Video được **tải lên ngay** lúc chạy.
-- **YouTube, TikTok, Facebook:** chọn **Schedule / Lên lịch** ngày mai **10:00**, quyền **công khai**. Facebook: `#prodash-create-button` → Reel (`#prodash_create_menu_items`) → 2 lần Next → **Publish now** → combobox **Date/Time** (`2 Sep 2026` / `10:00`) → đóng lịch bằng helper text → **Schedule for later** rồi **Schedule** ở chân. Không bấm Post, không bấm empty-state Schedule a post. Sau khi bài hiện tab Scheduled: chờ ~20s, làm tươi, nút `aria-label="Actions for this post"` → **Copy link** / **Sao chép liên kết** (permalink kiểu `facebook.com/share/r/...`, không dùng URL Content Library). TikTok: `tiktokstudio/content` → **Tải lên** → `#panel-video input[type=file]` → mô tả (DraftEditor) → `input[name=postSchedule][value=schedule]` (không Bây giờ) → `.tiktok-timepicker` giờ/phút rồi `span.day.valid` → đóng picker → `button[data-e2e=post_video_button]` **Lên lịch**. Sau đó chờ, làm tươi tab **Bài đăng**, copy link cột Hành động (không bấm Đăng).
-- **Instagram:** web không có Lên lịch → **Bài viết / Post** → Chia sẻ ngay (không Story, không Reel; không bật `[role=switch]`; không Cài đặt nâng cao). Record: `aria-label="Bài viết mới"` → **Bài viết** → **Chọn từ máy tính** / `form input[type=file]` → 2 lần **Tiếp** → chú thích `Viết chú thích...` → **Chia sẻ** (đúng chữ, không sheet **Chia sẻ bài viết**). Chờ **Xong** / Done (thường 2–4 phút) → mở ô video đầu trên profile (`section main a[href*="/p/"]` hoặc `/reel/`) → permalink = `page.url` (thanh địa chỉ, kiểu `instagram.com/p/...`). Không copy clipboard / không mở share sheet. Chạy thật: cách 3 tiếng (`enforce_ig_gap=True`); test: `enforce_ig_gap=False`.
-- Không Unlisted / Only you / Only me / Private cho luồng sản xuất này.
-- `schedule_publish`: `enabled=true`, `default_time=10:00`, `target_date=tomorrow`. `min_delay_between_posts_minutes=180`; `instagram.min_gap_hours=3`.
+### Quy Tắc 5: DummyWriter khi `--noconsole`
 
-### 💻 Quy Tắc 5: Safe Console Writer Trong PyInstaller `--noconsole`
-- Khi đóng gói `--noconsole`, `sys.stdout` và `sys.stderr` là `None`. Mọi luồng logger / uvicorn bắt buộc phải bọc qua `DummyWriter(isatty=False)` để tránh crash `'NoneType' object has no attribute 'isatty'`.
+### Quy Tắc 6: Auto mode `exclude_today=True`. Nút thủ công cho phép video hôm nay.
 
-### 🛡️ Quy Tắc 6: Bộ Lọc An Toàn Cho Video Tạo Trong Ngày (Chống Video Đang Sửa Dở)
-- Trong **Chế độ Tự Động Hàng Ngày (Auto Mode)**: Hệ thống **bắt buộc** truyền `exclude_today = True` vào `scan_and_download()` để bỏ qua toàn bộ video tạo trong ngày hôm nay. Chỉ tải video đã tạo từ ngày hôm trước trở về trước để đảm bảo user đã kết thúc hoàn toàn việc chỉnh sửa trên HatBuiNho.
-- Trong **Chế độ Thủ Công** (Khi user chủ động bấm nút `[ ⚡ ĐĂNG 1 VIDEO NGAY ]` hoặc `[ 📦 ĐĂNG HÀNG LOẠT ]`): Cho phép tải ngay video hiện có vì user đã chủ động thao tác.
+### Quy Tắc 7: HatBuiNho cookie-first
+- Có `#btn_view_history` thì không điền form. Thiếu username/password trên Dashboard thì không spam login. Đóng Đã đọc → Video → tab Đã xong.
 
-### 📂 Quy Tắc 7: HatBuiNho Phải Bấm Nút Video Trước
-- Cookie-first: nếu `#btn_view_history` đã hiện thì **không** điền form đăng nhập (tránh lỗi giới hạn 2 thiết bị).
-- Đóng overlay `Đã đọc`, **bấm nút Video** (`#btn_view_history`), rồi mới click `#history_tab_done`. Không nhảy thẳng tab Đã xong từ trang chủ.
+### Quy Tắc 8: AI Vilao
+- **Khi tải:** `suggest_popular_hashtags` — 3–5 hashtag phổ biến, gộp với kho đạo lý (`#luatnhanqua`, `#loiphatday`…). Thiếu `VILAO_API_KEY` → chỉ kho đạo lý, không chặn tải. Cấm `#hatbuinho` / chữ ký thương hiệu (`custom_caption.append_text` mặc định trống).
+- **Khi lỗi UI:** `diagnose_and_recover` tối đa 8 bước. Instagram được phép bấm Share. Không xử lý được → email + skip kênh.
 
-### Quy Tắc 8: AI chỉ vào khi lỗi — sửa được thì sửa, không thì email + skip kênh
-- Script selector chạy trước. Chỉ khi timeout / exception / popup lạ mới gọi [`ai_fallback.py`](_system/automation/ai_fallback.py) (Vilao `anxs/gemini-3.7-flash-high`).
-- AI xem screenshot + DOM, tối đa 8 bước. Cấm Đăng/Share ngay, cấm xóa video.
-- Không xử lý được (captcha, 2FA, limit, thiếu Lên lịch): `email_reporter.send_error_alert` **một lần**, `record_post(failed)`, **bỏ kênh đó**, tiếp tục kênh còn lại.
-- Key: `_system/.env` (`VILAO_API_KEY`). Thiếu key = không recover được → vẫn email + skip.
+### Quy Tắc 9: Không leak khi push GitHub
+- Không `git add` cookie, `.env`, `config.json`, `data.db`, `.exe`. Phát hành `.exe` bằng GitHub Release.
 
 ---
 
-## 9. CẤU TRÚC CƠ SỞ DỮ LIỆU & CẤU HÌNH
+## 10. CẤU TRÚC CƠ SỞ DỮ LIỆU & CẤU HÌNH
 
-### 9.1. Bảng `videos` trong `data.db`
-| Tên Cột | Kiểu Dữ Liệu | Mô Tả |
+### 10.1. Bảng `videos`
+| Cột | Kiểu | Mô tả |
 | :--- | :--- | :--- |
-| `id` | `INTEGER PRIMARY KEY` | Khóa chính tự tăng |
-| `hatbuinho_id` | `TEXT UNIQUE` | Mã băm định danh video trên HatBuiNho |
-| `title` | `TEXT` | Tên tệp video gốc |
-| `raw_script` | `TEXT` | Nội dung kịch bản văn bản trích từ web |
-| `suggested_title` | `TEXT` | Tiêu đề hoàn chỉnh đã làm sạch |
-| `hashtags` | `TEXT` | Hashtag đạo lý + hashtag phổ biến do AI chọn khi tải (không chữ ký thương hiệu) |
-| `file_path` | `TEXT` | Đường dẫn tệp `.mp4` trong `downloads/` |
-| `file_size` | `INTEGER` | Dung lượng tệp video (bytes) |
-| `status` | `TEXT` | `downloaded` (Trong kho chờ) \| `posted` (Đã đăng) \| `cleaned` (Đã xóa file cũ) |
-| `created_date_str` | `TEXT` | Thời gian tạo trên hệ thống |
-| `downloaded_at` | `TIMESTAMP` | Thời điểm tải về máy |
+| `id` | INTEGER PK | |
+| `hatbuinho_id` | TEXT UNIQUE | |
+| `title` / `raw_script` / `suggested_title` | TEXT | |
+| `hashtags` | TEXT | Đạo lý + AI phổ biến khi tải |
+| `file_path` / `file_size` | | `downloads/` |
+| `status` | TEXT | `downloaded` / `posted` / `cleaned` |
 
-### 9.2. Bảng `post_history` trong `data.db`
-| Tên Cột | Kiểu Dữ Liệu | Mô Tả |
-| :--- | :--- | :--- |
-| `id` | `INTEGER PRIMARY KEY` | Khóa chính tự tăng |
-| `video_id` | `INTEGER` | Khóa ngoại liên kết bảng `videos(id)` |
-| `platform` | `TEXT` | Tên nền tảng (`youtube`, `tiktok`, `facebook`, `instagram`) |
-| `status` | `TEXT` | `success` (Thành công) \| `failed` (Thất bại) \| `skipped` (Bỏ qua, ví dụ Instagram chưa đủ 3 tiếng) |
-| `post_url` | `TEXT` | Đường link thực tế của bài đăng |
-| `error_message` | `TEXT` | Chi tiết lỗi nếu đăng thất bại |
-| `posted_at` | `TIMESTAMP` | Thời điểm đăng bài |
+### 10.2. Bảng `post_history`
+`platform` = youtube / tiktok / facebook / instagram. `status` = success / failed / skipped. `post_url` = permalink.
+
+### 10.3. Cấu hình
+- Local: `_system/config.json` (gitignore). Mẫu: `config.example.json`.
+- `browser.headless=true` (mặc định): ẩn cửa sổ khi tải/đăng. Nút Dashboard **HIỂN THỊ QUÁ TRÌNH ĐĂNG** bật cửa sổ. **Mở Trình Duyệt Đăng Nhập** luôn hiện.
+- `browser.mute_audio=true` (mặc định): Chromium Playwright `--mute-audio`. Nút Dashboard đổi được; Chrome của user không bị mute.
+- `schedule_publish.default_time=10:00`, `target_date=tomorrow`.
+- `custom_caption.append_text` trống (không `#hatbuinho`).
+- `platforms.instagram.min_gap_hours=3`.
 
 ---
 
-## 10. BẢNG TRA CỨU & KHẮC PHỤC LỖI NHANH
+## 11. BẢNG TRA CỨU & KHẮC PHỤC LỖI NHANH
 
-| Hiện Tượng Lỗi | Nguyên Nhân Gốc Rễ | Cách Khắc Phục Chuẩn |
+| Hiện tượng | Nguyên nhân | Cách xử lý |
 | :--- | :--- | :--- |
-| `AttributeError: 'NoneType' object has no attribute 'isatty'` | Chạy PyInstaller `--noconsole` khiến `sys.stdout` là `None`. | Sử dụng `DummyWriter` trong `tray_app.py` và `logger.py` để bọc `sys.stdout`/`sys.stderr`. |
-| `ValueError: signal only works in main thread of the main interpreter` | Uvicorn cố gắng đăng ký OS signal trong background thread trên Windows. | Gán `server.install_signal_handlers = lambda: None` trước khi gọi `server.serve()`. |
-| `Failed to create a ProcessSingleton for your profile directory` | Cửa sổ Chrome đang chạy nền giữ khóa thư mục `browser_profiles/default`. | Đóng trình duyệt Chrome hoặc chạy lệnh `taskkill /F /IM chrome.exe` rồi thử lại. |
-| `Locator.click: Target page, context or browser has been closed` | Lớp phủ quảng cáo (`react-joyride`) chặn click khiến Playwright timeout. | Gọi `_dismiss_overlays(page)` trước khi click và dùng `click(force=True)`. |
-| Tiêu đề video bị cắt cụt từ giữa chừng | Trích xuất chuỗi cứng theo số ký tự mà không kiểm tra ranh giới từ. | Dùng hàm `_extract_clean_first_sentence` trong `hatbuinho_crawler.py`. |
-| YouTube không chuyển sang bước Visibility | Nút `Next` bị che khuất bởi scrim hoặc selector sai. | Dùng `page.evaluate()` click `document.getElementById('next-button')` tuần tự 3 lần. |
-| Không thấy danh sách video HatBuiNho | Overlay `Đã đọc` chặn, hoặc chưa bấm nút **Video**. | Đóng `Đã đọc`, click `#btn_view_history`, rồi `#history_tab_done`. |
-| TikTok kẹt bản nháp / Continue to post / không lấy được link | `Discard this post?` từ video trước; hộp `Continue to post?` sau khi bấm Schedule. | Discard (không Not now). Sau Schedule: bấm **Post now** trong dialog Continue to post (xác nhận lịch, không đổi Bây giờ). Copy link cột Hành động. |
-| Facebook đăng ngay trên tường cá nhân / kẹt overlay lịch | Composer cá nhân không có Lên lịch; calendar che nút Schedule for later. | `#prodash-create-button` → Reel; combobox Date/Time; bấm helper text đóng lịch; Schedule for later rồi Schedule footer; xác nhận tab Scheduled; chờ + reload rồi Copy link. |
-| Instagram không có nút Lên lịch | Instagram web (bước Chia sẻ) không hỗ trợ schedule. | Bài viết → Share ngay. Sau Xong: mở video, copy `page.url`. Chạy thật: cách 3 tiếng; test: đăng ngay. |
-| YouTube `Daily upload limit reached` ở bước Details | Banner nằm đáy dialog, trong shadow DOM `ytcp-*`; selector Playwright `:has-text` không thấy. | `_detect_daily_upload_limit` quét shadow DOM ngay sau đính file / điền tiêu đề / trước Next. Dừng kênh, email, không bấm Next. |
+| `stdout` None / `isatty` | PyInstaller `--noconsole` | `DummyWriter` trong `tray_app.py` / `logger.py` |
+| `signal only works in main thread` | Uvicorn trong thread | `install_signal_handlers = lambda: None` |
+| Profile Playwright bị khóa | Chromium leftover giữ `browser_profiles` | Chỉ tắt leftover `ms-playwright` / `.exe` app, không kill Chrome user |
+| HatBuiNho không thấy video | Overlay Đã đọc / chưa bấm Video | `#btn_view_history` rồi `#history_tab_done` |
+| TikTok draft / Continue to post | Bản nháp hoặc hộp xác nhận lịch | Discard; trong Continue to post bấm Post now (xác nhận lịch) |
+| Facebook đăng tường / kẹt lịch | Sai composer; calendar che nút | Prodash Reel; helper text; Schedule footer; Copy link |
+| Instagram không hẹn giờ | Web không có Lên lịch | Share ngay; copy `page.url` |
+| YouTube Daily upload limit | Banner shadow DOM | Dừng kênh, email, không Next |
+| User không có .exe trong git clone | `.exe` không nằm trong git | Tải https://github.com/ngonco/dangvideo/releases/latest |
 
----
-
-*Tài liệu này được cập nhật chính xác tuyệt đối theo mã nguồn hiện tại của dự án Auto Video Pro.*
+Tài liệu này khớp mã nguồn hiện tại: native schedule, Instagram permalink thanh địa chỉ, hashtag AI khi tải, phát hành `.exe` qua GitHub Releases.

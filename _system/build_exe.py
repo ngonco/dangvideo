@@ -24,6 +24,7 @@ cmd = [
     "--name", "Tu_dong_dang_video",
     "--add-data", "static;static",
     "--add-data", "config.example.json;.",
+    "--add-data", "VERSION;.",
     "--hidden-import", "uvicorn.logging",
     "--hidden-import", "uvicorn.loops.auto",
     "--hidden-import", "uvicorn.protocols.http.auto",

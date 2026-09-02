@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from core.logger import logger
 from core.database import db
-from core.config_manager import config_mgr, ROOT_DIR, SYSTEM_DIR, DOWNLOADS_DIR
+from core.config_manager import config_mgr, ROOT_DIR, SYSTEM_DIR, DOWNLOADS_DIR, get_app_version
 from core.autostart_manager import autostart_mgr
 from automation.workflow_manager import workflow_mgr
 from scheduler.task_scheduler import task_scheduler
@@ -109,9 +109,26 @@ async def get_config():
 @app.post("/api/config")
 async def update_config(req: ConfigUpdateRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    mute_changed = False
+    headless_changed = False
+    if isinstance(updates.get("browser"), dict):
+        current_browser = dict(config_mgr.get("browser") or {})
+        mute_changed = "mute_audio" in updates["browser"]
+        headless_changed = "headless" in updates["browser"]
+        current_browser.update(updates["browser"])
+        updates["browser"] = current_browser
     config_mgr.update(updates)
     task_scheduler.reload_jobs()
     logger.info("Đã cập nhật cấu hình hệ thống.", "CONFIG")
+    if mute_changed or headless_changed:
+        from automation.browser_engine import browser_engine
+        if workflow_mgr.is_busy:
+            logger.info(
+                "Đã lưu cấu hình trình duyệt; sẽ áp dụng lần mở tiếp theo (đang đăng, không đóng cửa sổ).",
+                "BROWSER",
+            )
+        else:
+            await browser_engine.close()
     return {"success": True, "config": config_mgr.config}
 
 @app.post("/api/action/scan")
@@ -243,7 +260,8 @@ async def send_test_email():
 
 @app.get("/api/system/version")
 async def get_system_version():
-    commit_hash = "v1.0.0"
+    version = get_app_version()
+    commit_hash = f"v{version}"
     commit_date = ""
     commit_msg = "Phiên bản mới nhất"
     try:
@@ -255,7 +273,7 @@ async def get_system_version():
     except Exception:
         pass
     return {
-        "version": "1.0.0",
+        "version": version,
         "commit": commit_hash,
         "date": commit_date,
         "message": commit_msg

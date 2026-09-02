@@ -312,6 +312,68 @@ body {
     background: var(--wood-brown-hover);
 }
 
+.hero-browser-toggles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.btn.btn-mute-audio,
+.btn.btn-show-browser {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 0;
+    width: 100%;
+    padding: 12px 18px;
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    background: #37474F;
+    color: #FFFFFF;
+    border: 2px solid #263238;
+    box-shadow: var(--shadow-btn);
+    transition: all 0.2s ease;
+}
+
+.btn.btn-mute-audio:hover,
+.btn.btn-show-browser:hover {
+    background: #455A64;
+}
+
+.btn.btn-mute-audio.is-unmuted,
+.btn.btn-show-browser.is-shown {
+    background: #FFF8E1;
+    color: var(--text-main);
+    border-color: var(--border-warm);
+}
+
+.btn.btn-mute-audio.is-unmuted:hover,
+.btn.btn-show-browser.is-shown:hover {
+    background: #FFECB3;
+}
+
+.btn.btn-mute-audio .btn-icon,
+.btn.btn-show-browser .btn-icon {
+    font-size: 22px;
+    flex-shrink: 0;
+}
+
+.btn.btn-mute-audio .btn-main-text,
+.btn.btn-show-browser .btn-main-text {
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.btn.btn-mute-audio .btn-sub-text,
+.btn.btn-show-browser .btn-sub-text {
+    font-size: 12px;
+    opacity: 0.9;
+    font-weight: 500;
+}
+
 /* Nút 2: Đăng Hàng Loạt Theo Lịch */
 .btn-batch-queue {
     background: #1976D2;
@@ -1015,6 +1077,7 @@ input:checked + .slider:before {
 @media (max-width: 768px) {
     .app-header { flex-direction: column; align-items: flex-start; gap: 16px; }
     .hero-actions-grid { grid-template-columns: 1fr; }
+    .hero-browser-toggles { grid-template-columns: 1fr; }
     .accounts-grid { grid-template-columns: 1fr; }
     #cardHatBuiNho { grid-column: span 1; }
     .advanced-grid { grid-template-columns: 1fr; }

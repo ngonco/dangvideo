@@ -23,6 +23,24 @@ DOWNLOADS_DIR = os.path.join(ROOT_DIR, "downloads")
 PROFILES_DIR = os.path.join(SYSTEM_DIR, "browser_profiles")
 CONFIG_PATH = os.path.join(SYSTEM_DIR, "config.json")
 DB_PATH = os.path.join(SYSTEM_DIR, "data.db")
+VERSION_PATH = os.path.join(SYSTEM_DIR, "VERSION")
+
+
+def get_app_version() -> str:
+    """Đọc phiên bản từ _system/VERSION (cả khi chạy .exe PyInstaller)."""
+    candidates = [os.path.join(SYSTEM_DIR, "VERSION"), os.path.join(ROOT_DIR, "VERSION")]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.insert(0, os.path.join(meipass, "VERSION"))
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                value = open(path, encoding="utf-8").read().strip().split()[0]
+                if value:
+                    return value
+            except Exception:
+                continue
+    return "0.0.0"
 
 DEFAULT_CONFIG = {
     "hatbuinho": {
@@ -45,7 +63,8 @@ DEFAULT_CONFIG = {
         "min_delay_between_posts_minutes": 180
     },
     "browser": {
-        "headless": False,
+        "headless": True,
+        "mute_audio": True,
         "user_data_dir": "browser_profiles/default"
     },
         "schedule_publish": {
