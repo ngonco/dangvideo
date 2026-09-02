@@ -15,6 +15,12 @@ if sys.stdout is None or not hasattr(sys.stdout, 'write'):
 if sys.stderr is None or not hasattr(sys.stderr, 'write'):
     sys.stderr = DummyWriter()
 
+# Cấu hình Playwright Browser Path cho PyInstaller executable
+local_appdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))
+ms_playwright_dir = os.path.join(local_appdata, "ms-playwright")
+if os.path.exists(ms_playwright_dir):
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = ms_playwright_dir
+
 import time
 import threading
 import traceback
@@ -189,6 +195,13 @@ class TrayApplication:
         )
 
     def run(self):
+        # Tự động kích hoạt khởi động cùng Windows nếu chưa được bật
+        try:
+            if not autostart_mgr.is_autostart_enabled():
+                autostart_mgr.enable_autostart()
+        except Exception:
+            pass
+
         # 1. Khởi động FastAPI server trong thread nền
         self.server_thread = threading.Thread(target=self.start_uvicorn, daemon=True)
         self.server_thread.start()

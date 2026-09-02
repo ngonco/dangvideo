@@ -40,7 +40,9 @@ async def main():
 
     result = await workflow_mgr.publish_video_to_platforms(
         video_id=target_video["id"],
-        target_platforms=target_platforms
+        target_platforms=target_platforms,
+        schedule_time="10:00",
+        enforce_ig_gap=False,
     )
 
     print("\n" + "=" * 65)

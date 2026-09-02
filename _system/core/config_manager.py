@@ -34,23 +34,28 @@ DEFAULT_CONFIG = {
     "platforms": {
         "youtube": {"enabled": True, "privacy": "public", "mark_ai": True, "name": "YouTube Shorts"},
         "tiktok": {"enabled": True, "privacy": "public", "mark_ai": True, "name": "TikTok"},
-        "facebook": {"enabled": True, "target_type": "page", "page_name": "", "mark_ai": True, "name": "Facebook Reels"},
-        "instagram": {"enabled": True, "share_to_feed": True, "mark_ai": True, "name": "Instagram Reels"}
+        "facebook": {"enabled": True, "target_type": "professional_dashboard", "page_name": "", "mark_ai": True, "name": "Facebook Reels"},
+        "instagram": {"enabled": True, "share_to_feed": True, "mark_ai": True, "min_gap_hours": 3, "name": "Instagram Reels"}
     },
     "schedule": {
-        "auto_mode": False,
+        "auto_mode": True,
         "max_posts_per_day": 3,
         "post_time_slots": ["08:00", "11:30", "19:30"],
         "scan_interval_minutes": 60,
-        "min_delay_between_posts_minutes": 60
+        "min_delay_between_posts_minutes": 180
     },
     "browser": {
         "headless": False,
         "user_data_dir": "browser_profiles/default"
     },
+        "schedule_publish": {
+            "enabled": True,
+            "default_time": "10:00",
+            "target_date": "tomorrow"
+        },
     "custom_caption": {
         "prefix_text": "",
-        "append_text": "\n#hatbuinho #dao_duc #song_dep #tam_hon"
+        "append_text": ""
     }
 }
 

@@ -1,633 +1,770 @@
-// State
-let appState = {
-  videos: [],
-  config: {},
-  stats: {},
-  ws: null
-};
+// ==========================================================================
+// TỰ ĐỘNG ĐĂNG VIDEO — CLIENT SCRIPT (PHONG CÁCH MỘC & ĐƠN GIẢN)
+// ==========================================================================
 
-// DOM Elements
-const tabBtns = document.querySelectorAll('.tab-btn');
-const tabViews = document.querySelectorAll('.tab-view');
-const videoGrid = document.getElementById('videoGridContainer');
-const terminalBody = document.getElementById('terminalBody');
+let isAutoMode = true;
+let currentTimeSlots = ["08:00", "11:30", "19:30"];
+let socket = null;
+let userManuallyToggledLogin = false;
 
-// Initialize
 document.addEventListener('DOMContentLoaded', () => {
-  setupTabs();
-  setupWebSocket();
-  loadStats();
-  loadVideos();
-  loadConfig();
-  loadSystemVersion();
-  setupEventListeners();
-
-  setInterval(() => {
-    loadStats();
-  }, 15000);
+    initApp();
 });
 
-// Tab Switching
-function setupTabs() {
-  tabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.dataset.tab;
-      tabBtns.forEach(b => b.classList.remove('active'));
-      tabViews.forEach(v => v.classList.remove('active'));
-      
-      btn.classList.add('active');
-      const viewEl = document.getElementById(`tab-${target}`);
-      if (viewEl) viewEl.classList.add('active');
+async function initApp() {
+    setupEventListeners();
+    connectWebSocket();
+    await fetchSystemVersion();
+    await fetchConfigAndState();
+    await fetchQueueSummary();
+    await fetchAccountsStatus();
+    await fetchHistory();
+    await fetchAutostartStatus();
+
+    // Tự động kiểm tra lại trạng thái tài khoản khi quay lại tab
+    window.addEventListener('focus', () => {
+        fetchAccountsStatus();
+        fetchQueueSummary();
     });
-  });
+
+    // Tự động làm mới lịch sử và hàng đợi mỗi 30s
+    setInterval(() => {
+        fetchHistory();
+        fetchAccountsStatus();
+        fetchQueueSummary();
+    }, 30000);
 }
 
-// WebSocket Live Logs
-function setupWebSocket() {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
-
-  appState.ws = new WebSocket(wsUrl);
-
-  appState.ws.onmessage = (event) => {
-    try {
-      const log = JSON.parse(event.data);
-      appendLogLine(log);
-    } catch (e) {
-      console.error(e);
+// --------------------------------------------------------------------------
+// 1. CÁC SỰ KIỆN NÚT BẤM CHÍNH
+// --------------------------------------------------------------------------
+function setupEventListeners() {
+    // Nút 1: Bật / Tắt tự động
+    const btnToggleAuto = document.getElementById('btnToggleAuto');
+    if (btnToggleAuto) {
+        btnToggleAuto.addEventListener('click', toggleScheduler);
     }
-  };
 
-  appState.ws.onclose = () => {
-    setTimeout(setupWebSocket, 3000);
-  };
+    // Nút 2: Đăng hàng loạt theo lịch (Đa ngày)
+    const btnBatchQueue = document.getElementById('btnBatchQueue');
+    if (btnBatchQueue) {
+        btnBatchQueue.addEventListener('click', runBatchQueueDownload);
+    }
+
+    // Nút 3: Đăng 1 Video Ngay
+    const btnPostNow = document.getElementById('btnPostNow');
+    if (btnPostNow) {
+        btnPostNow.addEventListener('click', runWorkflowNow);
+    }
+
+    // Nút Thêm Mốc Giờ Hẹn Đăng
+    const btnAddSlot = document.getElementById('btnAddSlot');
+    if (btnAddSlot) {
+        btnAddSlot.addEventListener('click', addTimeSlot);
+    }
+
+    // Accordion Đăng Nhập Tài Khoản
+    const btnToggleLogin = document.getElementById('btnToggleLogin');
+    if (btnToggleLogin) {
+        btnToggleLogin.addEventListener('click', () => {
+            userManuallyToggledLogin = true;
+            toggleLoginAccordion();
+        });
+    }
+
+    // Nút Lưu tài khoản HatBuiNho
+    const btnSaveHbn = document.getElementById('btnSaveHbn');
+    if (btnSaveHbn) {
+        btnSaveHbn.addEventListener('click', saveHatBuiNhoConfig);
+    }
+
+    // Accordion Tùy Chỉnh Nâng Cao
+    const btnToggleAdvanced = document.getElementById('btnToggleAdvanced');
+    if (btnToggleAdvanced) {
+        btnToggleAdvanced.addEventListener('click', toggleAdvancedAccordion);
+    }
+
+    // Công tắc Khởi động cùng Windows
+    const chkAutostart = document.getElementById('chkAutostart');
+    if (chkAutostart) {
+        chkAutostart.addEventListener('change', onAutostartChanged);
+    }
+
+    // Nút Dọn dẹp video cũ
+    const btnManualCleanup = document.getElementById('btnManualCleanup');
+    if (btnManualCleanup) {
+        btnManualCleanup.addEventListener('click', manualCleanup);
+    }
+
+    // Nút Gửi Thử Email Báo Cáo
+    const btnSendTestEmail = document.getElementById('btnSendTestEmail');
+    if (btnSendTestEmail) {
+        btnSendTestEmail.addEventListener('click', sendTestEmail);
+    }
+
+    // Nút Cập nhật phần mềm
+    const btnCheckUpdate = document.getElementById('btnCheckUpdate');
+    if (btnCheckUpdate) {
+        btnCheckUpdate.addEventListener('click', performUpdate);
+    }
+
+    // Nút Xóa logs
+    const btnClearLogs = document.getElementById('btnClearLogs');
+    if (btnClearLogs) {
+        btnClearLogs.addEventListener('click', () => {
+            document.getElementById('logsTerminal').innerHTML = '<div class="log-line log-info">[HỆ THỐNG] Đã xóa lịch sử nhật ký hiển thị.</div>';
+        });
+    }
+}
+
+// --------------------------------------------------------------------------
+// 2. HERO CONTROL & KHUNG HẸN GIỜ ĐĂNG VIDEO
+// --------------------------------------------------------------------------
+async function fetchConfigAndState() {
+    try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (data.config) {
+            isAutoMode = data.config.schedule?.auto_mode !== false;
+            updateHeroUI(isAutoMode);
+
+            if (data.config.schedule?.post_time_slots) {
+                currentTimeSlots = data.config.schedule.post_time_slots;
+                renderTimeSlots();
+            }
+
+            // Điền form HatBuiNho
+            if (data.config.hatbuinho) {
+                document.getElementById('hbnUsername').value = data.config.hatbuinho.username || '';
+                document.getElementById('hbnPassword').value = data.config.hatbuinho.password || '';
+            }
+        }
+    } catch (e) {
+        console.error('Lỗi nạp cấu hình:', e);
+    }
+}
+
+function updateHeroUI(autoRunning) {
+    isAutoMode = autoRunning;
+    const heroBox = document.getElementById('heroStatusBox');
+    const heroIcon = document.getElementById('heroStatusIcon');
+    const heroTitle = document.getElementById('heroStatusTitle');
+    const heroDesc = document.getElementById('heroStatusDesc');
+
+    const btnToggle = document.getElementById('btnToggleAuto');
+    const btnIcon = document.getElementById('btnToggleIcon');
+    const btnMain = document.getElementById('btnToggleMainText');
+    const btnSub = document.getElementById('btnToggleSubText');
+
+    if (autoRunning) {
+        heroBox.classList.remove('paused');
+        heroIcon.innerText = '🟢';
+        heroTitle.innerText = 'HỆ THỐNG ĐANG TỰ ĐỘNG ĐĂNG VIDEO';
+        heroDesc.innerText = 'Đang tự động chạy ngầm theo các khung giờ hẹn bên dưới. Khi bật laptop là máy tự chạy.';
+
+        btnToggle.classList.remove('is-paused');
+        btnIcon.innerText = '⏸️';
+        btnMain.innerText = 'BẬT / TẮT TỰ ĐỘNG';
+        btnSub.innerText = 'Đăng tự động mỗi ngày 1 lần (Đang BẬT)';
+    } else {
+        heroBox.classList.add('paused');
+        heroIcon.innerText = '⚪';
+        heroTitle.innerText = 'HỆ THỐNG ĐANG TẠM DỪNG';
+        heroDesc.innerText = 'Chế độ tự động đăng đang tắt. Bấm nút bên dưới để bật tự động chạy.';
+
+        btnToggle.classList.add('is-paused');
+        btnIcon.innerText = '▶️';
+        btnMain.innerText = 'BẬT / TẮT TỰ ĐỘNG';
+        btnSub.innerText = 'Đăng tự động mỗi ngày 1 lần (Đang TẮT)';
+    }
+}
+
+async function toggleScheduler() {
+    try {
+        const res = await fetch('/api/action/toggle-scheduler', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            updateHeroUI(data.auto_mode);
+            showToast(data.auto_mode ? '🟢 Đã BẬT chế độ tự động đăng video theo hẹn giờ!' : '⏸️ Đã TẠM DỪNG chế độ tự động!');
+        }
+    } catch (e) {
+        showToast('❌ Có lỗi khi bật/tắt tự động.', 'error');
+    }
+}
+
+function renderTimeSlots() {
+    const container = document.getElementById('timeSlotsHeroList');
+    if (!container) return;
+
+    if (!currentTimeSlots || currentTimeSlots.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); font-style: italic; padding: 6px 0;">Chưa có mốc giờ nào. Hãy chọn giờ và bấm nút Thêm Mốc Giờ ở dưới!</p>';
+        return;
+    }
+
+    container.innerHTML = currentTimeSlots.map(slot => {
+        const [h, m] = slot.split(':');
+        const hourNum = parseInt(h, 10);
+        const icon = hourNum < 11 ? '🌅' : (hourNum < 18 ? '☀️' : '🌙');
+        const period = hourNum < 11 ? 'Sáng' : (hourNum < 18 ? 'Trưa/Chiều' : 'Tối');
+        return `
+            <div class="slot-chip-hero">
+                <span>${icon} <b>${slot}</b> (${period})</span>
+                <button class="btn-delete-slot" onclick="deleteTimeSlot('${slot}')" title="Xóa mốc giờ ${slot}">✕</button>
+            </div>
+        `;
+    }).join('');
+}
+
+async function addTimeSlot() {
+    const input = document.getElementById('inputNewSlot');
+    const slot = input ? input.value.trim() : '';
+    if (!slot || !slot.includes(':')) {
+        showToast('⚠️ Vui lòng chọn mốc giờ hợp lệ!', 'warn');
+        return;
+    }
+
+    if (currentTimeSlots.includes(slot)) {
+        showToast(`⚠️ Mốc giờ ${slot} đã có trong danh sách rồi!`, 'warn');
+        return;
+    }
+
+    const updated = [...currentTimeSlots, slot].sort();
+    await saveTimeSlots(updated, `⏰ Đã thêm mốc giờ hẹn đăng: ${slot}!`);
+}
+
+async function deleteTimeSlot(slot) {
+    if (currentTimeSlots.length <= 1) {
+        showToast('⚠️ Cần giữ lại ít nhất 1 khung giờ đăng video trong ngày!', 'warn');
+        return;
+    }
+
+    const updated = currentTimeSlots.filter(s => s !== slot);
+    await saveTimeSlots(updated, `🗑️ Đã xóa mốc giờ ${slot}!`);
+}
+
+async function saveTimeSlots(slots, successMsg) {
+    try {
+        const res = await fetch('/api/schedule/timeslots', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ time_slots: slots })
+        });
+        const data = await res.json();
+        if (data.success) {
+            currentTimeSlots = data.time_slots;
+            renderTimeSlots();
+            showToast(successMsg || '⏰ Đã cập nhật khung giờ hẹn đăng!', 'success');
+            await fetchQueueSummary();
+        }
+    } catch (e) {
+        showToast('❌ Lỗi khi lưu khung giờ.', 'error');
+    }
+}
+
+async function fetchQueueSummary() {
+    try {
+        const res = await fetch('/api/queue/summary');
+        const data = await res.json();
+        const textElem = document.getElementById('queueSummaryText');
+        if (textElem && data.success && data.queue) {
+            const { total_pending, estimated_days } = data.queue;
+            if (total_pending > 0) {
+                textElem.innerHTML = `<b style="color: var(--tea-green); font-size: 15px;">${total_pending} video</b> đang chờ trong kho (Dự kiến tự động đăng trong <b style="color: var(--warm-orange);">${estimated_days} ngày</b> tới theo các mốc giờ)`;
+            } else {
+                textElem.innerHTML = `Kho đang trống (0 video). Hệ thống sẽ tự động quét tải video 'Chưa tải xuống' cũ nhất khi đến giờ hẹn.`;
+            }
+        }
+    } catch (e) {
+        console.error('Lỗi đọc tóm tắt hàng đợi:', e);
+    }
+}
+
+async function runBatchQueueDownload() {
+    const btn = document.getElementById('btnBatchQueue');
+    const progressBox = document.getElementById('workflowProgressBox');
+    const progressTitle = document.getElementById('progressTitle');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressBarFill = document.getElementById('progressBarFill');
+    const progressStepDetail = document.getElementById('progressStepDetail');
+
+    if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+    }
+    progressBox.style.display = 'block';
+    progressPercent.innerText = '20%';
+    progressBarFill.style.width = '20%';
+    progressTitle.innerText = '📦 Đang quét & tải toàn bộ video từ HatBuiNho...';
+    progressStepDetail.innerText = 'Hệ thống đang mở trình duyệt và gom tất cả video chưa tải vào kho...';
+
+    showToast('📦 Đang quét & tải toàn bộ video vào Kho Hàng Đợi...', 'info');
+
+    try {
+        const res = await fetch('/api/action/batch-download-queue', { method: 'POST' });
+        const data = await res.json();
+
+        if (data.success) {
+            progressPercent.innerText = '100%';
+            progressBarFill.style.width = '100%';
+            progressTitle.innerText = '✅ Hoàn tất gom video vào kho!';
+            progressStepDetail.innerText = data.message || `Đã tải về ${data.downloaded_count || 0} video mới vào kho hàng đợi.`;
+            showToast(`🎉 ${data.message || 'Đã gom video thành công!'}`, 'success');
+            await fetchQueueSummary();
+        } else {
+            progressTitle.innerText = '⚠️ Thông báo quét video:';
+            progressStepDetail.innerText = data.error || data.message || 'Không tải được video.';
+            showToast(data.error || 'Chưa tải được video.', 'warn');
+        }
+    } catch (e) {
+        progressTitle.innerText = '❌ Có sự cố khi tải hàng loạt';
+        progressStepDetail.innerText = e.message;
+        showToast('❌ Sự cố kết nối máy chủ.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+        }
+        setTimeout(() => {
+            progressBox.style.display = 'none';
+        }, 10000);
+    }
+}
+
+// --------------------------------------------------------------------------
+// 3. ĐĂNG 1 VIDEO NGAY BÂY GIỜ (RUN WORKFLOW)
+// --------------------------------------------------------------------------
+async function runWorkflowNow() {
+    const btn = document.getElementById('btnPostNow');
+    const progressBox = document.getElementById('workflowProgressBox');
+    const progressTitle = document.getElementById('progressTitle');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressBarFill = document.getElementById('progressBarFill');
+    const progressStepDetail = document.getElementById('progressStepDetail');
+
+    btn.disabled = true;
+    btn.style.opacity = '0.7';
+    progressBox.style.display = 'block';
+    progressPercent.innerText = '15%';
+    progressBarFill.style.width = '15%';
+    progressTitle.innerText = '⏳ Đang quét và tải video từ HatBuiNho...';
+    progressStepDetail.innerText = 'Ưu tiên video Chưa tải xuống; hết thì lấy video mới nhất...';
+
+    showToast('⚡ Bắt đầu tiến trình tải & đăng 1 video...', 'info');
+
+    try {
+        const res = await fetch('/api/action/run-workflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'normal' })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            progressPercent.innerText = '100%';
+            progressBarFill.style.width = '100%';
+            progressTitle.innerText = '✅ Hoàn tất đăng video!';
+            progressStepDetail.innerText = data.message || 'Đã phân phối đăng video thành công lên các kênh.';
+            showToast('🎉 Đăng video thành công!', 'success');
+            await fetchHistory();
+        } else {
+            progressTitle.innerText = '⚠️ Thông báo từ hệ thống:';
+            progressStepDetail.innerText = data.message || data.error || 'Có thông tin cần kiểm tra.';
+            showToast(data.message || 'Chưa đăng được video.', 'warn');
+        }
+    } catch (e) {
+        progressTitle.innerText = '❌ Có sự cố khi đăng video';
+        progressStepDetail.innerText = e.message;
+        showToast('❌ Sự cố kết nối máy chủ.', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        setTimeout(() => {
+            progressBox.style.display = 'none';
+        }, 10000);
+    }
+}
+
+// --------------------------------------------------------------------------
+// 4. ACCORDION ĐĂNG NHẬP TÀI KHOẢN & KIỂM TRA TRẠNG THÁI
+// --------------------------------------------------------------------------
+function toggleLoginAccordion() {
+    const content = document.getElementById('loginAccordionContent');
+    const arrow = document.getElementById('accordionLoginArrow');
+    if (!content) return;
+
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        if (arrow) arrow.classList.add('rotated');
+    } else {
+        content.style.display = 'none';
+        if (arrow) arrow.classList.remove('rotated');
+    }
+}
+
+async function fetchAccountsStatus() {
+    try {
+        const res = await fetch('/api/accounts/status');
+        const data = await res.json();
+        if (data.success && data.statuses) {
+            updateAccountBadge('statusHatBuiNho', data.statuses.hatbuinho, 'Đã Cấu Hình', 'Chưa Cấu Hình');
+            updateAccountBadge('statusYouTube', data.statuses.youtube, 'Đã Đăng Nhập', 'Chưa Đăng Nhập');
+            updateAccountBadge('statusTikTok', data.statuses.tiktok, 'Đã Đăng Nhập', 'Chưa Đăng Nhập');
+            updateAccountBadge('statusFacebook', data.statuses.facebook, 'Đã Đăng Nhập', 'Chưa Đăng Nhập');
+            updateAccountBadge('statusInstagram', data.statuses.instagram, 'Đã Đăng Nhập', 'Chưa Đăng Nhập');
+
+            // Tính số lượng kênh đã kết nối
+            const total = 5;
+            let connected = 0;
+            if (data.statuses.hatbuinho) connected++;
+            if (data.statuses.youtube) connected++;
+            if (data.statuses.tiktok) connected++;
+            if (data.statuses.facebook) connected++;
+            if (data.statuses.instagram) connected++;
+
+            const badgeSummary = document.getElementById('badgeAccountSummary');
+            const loginSub = document.getElementById('loginAccordionSub');
+            const loginContent = document.getElementById('loginAccordionContent');
+            const arrow = document.getElementById('accordionLoginArrow');
+
+            if (badgeSummary) {
+                if (connected === total) {
+                    badgeSummary.innerText = `🟢 Đã kết nối đủ 5/5 kênh`;
+                    badgeSummary.style.background = 'var(--tea-green-light)';
+                    badgeSummary.style.color = 'var(--tea-green)';
+                    badgeSummary.style.borderColor = 'var(--tea-green-border)';
+                    if (loginSub) loginSub.innerText = 'Tất cả tài khoản đã sẵn sàng tự động đăng video.';
+                    
+                    // Tự động thu gọn nếu user chưa can thiệp thủ công
+                    if (!userManuallyToggledLogin && loginContent) {
+                        loginContent.style.display = 'none';
+                        if (arrow) arrow.classList.remove('rotated');
+                    }
+                } else {
+                    badgeSummary.innerText = `⚠️ Đã kết nối ${connected}/5 kênh`;
+                    badgeSummary.style.background = '#FFF8E1';
+                    badgeSummary.style.color = '#F57F17';
+                    badgeSummary.style.borderColor = '#FFE082';
+                    if (loginSub) loginSub.innerText = '👉 Có kênh chưa đăng nhập. Bấm vào đây để đăng nhập tài khoản!';
+                    
+                    // Tự động mở rộng nếu còn thiếu kênh
+                    if (!userManuallyToggledLogin && loginContent) {
+                        loginContent.style.display = 'block';
+                        if (arrow) arrow.classList.add('rotated');
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Lỗi đọc trạng thái tài khoản:', e);
+    }
+}
+
+function updateAccountBadge(elemId, isConnected, connectedText, pendingText) {
+    const elem = document.getElementById(elemId);
+    if (!elem) return;
+    if (isConnected) {
+        elem.className = 'account-status-badge badge-connected';
+        elem.innerText = `🟢 ${connectedText}`;
+    } else {
+        elem.className = 'account-status-badge badge-pending';
+        elem.innerText = `⚪ ${pendingText}`;
+    }
+}
+
+async function openLoginBrowser(platform) {
+    const names = {
+        'hatbuinho': 'HatBuiNho.com',
+        'youtube': 'YouTube Studio',
+        'tiktok': 'TikTok Creator',
+        'facebook': 'Facebook',
+        'instagram': 'Instagram'
+    };
+    const pName = names[platform] || platform.toUpperCase();
+    showToast(`🌐 Đang mở trình duyệt để bạn đăng nhập ${pName}...`, 'info');
+
+    try {
+        const res = await fetch(`/api/browser/open-login/${platform}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`👉 Hãy đăng nhập ${pName} trên cửa sổ vừa mở, sau đó đóng lại là xong!`, 'success');
+        }
+    } catch (e) {
+        showToast('❌ Không thể mở trình duyệt.', 'error');
+    }
+}
+
+async function saveHatBuiNhoConfig() {
+    const u = document.getElementById('hbnUsername').value.trim();
+    const p = document.getElementById('hbnPassword').value.trim();
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hatbuinho: { username: u, password: p, auto_login: true, url: "https://hatbuinho.com/" }
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast('💾 Đã lưu tài khoản HatBuiNho thành công!', 'success');
+            await fetchAccountsStatus();
+        }
+    } catch (e) {
+        showToast('❌ Lỗi khi lưu tài khoản.', 'error');
+    }
+}
+
+// --------------------------------------------------------------------------
+// 5. DANH SÁCH CÁC VIDEO ĐÃ ĐĂNG
+// --------------------------------------------------------------------------
+async function fetchHistory() {
+    try {
+        const res = await fetch('/api/history');
+        const data = await res.json();
+        const tbody = document.getElementById('historyTableBody');
+        if (!tbody) return;
+        
+        if (!data.history || data.history.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="empty-table-msg">Chưa có video nào trong kho hoặc đã đăng. Bấm nút <b>"Bấm Đăng 1 Video Ngay"</b> ở trên để thử nghiệm!</td></tr>';
+            return;
+        }
+
+        const platformsList = ["youtube", "tiktok", "facebook", "instagram"];
+        const platformNames = {
+            "youtube": "YouTube",
+            "tiktok": "TikTok",
+            "facebook": "Facebook",
+            "instagram": "Instagram"
+        };
+        const platformIcons = {
+            "youtube": "▶️",
+            "tiktok": "🎵",
+            "facebook": "📘",
+            "instagram": "📸"
+        };
+
+        const rowsHtml = data.history.map((v, index) => {
+            const rawTitle = v.suggested_title || v.title || `Video #${v.id || (index + 1)}`;
+            const isPosted = v.status === 'posted';
+            const isQueue = v.status === 'downloaded';
+
+            const statusTag = isPosted 
+                ? '<span class="tag-video-status tag-posted">✅ Đã xuất bản</span>' 
+                : (isQueue ? '<span class="tag-video-status tag-downloaded">📦 Trong kho chờ đăng</span>' : '');
+
+            const platforms = v.platforms || {};
+            const linksHtml = platformsList.map(plat => {
+                const p = platforms[plat];
+                const pName = platformNames[plat];
+                const pIcon = platformIcons[plat];
+
+                if (!p) {
+                    return `<span class="btn-view-post badge-pending">⚪ ${pName} (Chờ)</span>`;
+                }
+
+                if (p.status === 'success') {
+                    if (p.post_url && p.post_url.startsWith('http')) {
+                        return `<a href="${p.post_url}" target="_blank" class="btn-view-post link-${plat}">${pIcon} ${pName} ↗</a>`;
+                    } else {
+                        return `<span class="btn-view-post link-${plat}">🟢 ${pName} (Đã đăng)</span>`;
+                    }
+                } else {
+                    return `<span class="btn-view-post badge-failed" title="Chi tiết lỗi: ${escapeHtml(p.error_message || 'Thất bại')}">❌ ${pName} (Lỗi)</span>`;
+                }
+            }).join(' ');
+
+            return `
+                <tr>
+                    <td><b>#${index + 1}</b></td>
+                    <td class="video-title-text">
+                        <div style="font-size: 15px; font-weight: 700; color: var(--text-main);">${escapeHtml(rawTitle)}</div>
+                        <div style="margin-top: 4px;">${statusTag}</div>
+                    </td>
+                    <td class="video-time-text">${escapeHtml(v.time || 'Mới đây')}</td>
+                    <td><div class="platform-links-group">${linksHtml}</div></td>
+                </tr>
+            `;
+        }).join('');
+
+        tbody.innerHTML = rowsHtml;
+    } catch (e) {
+        console.error('Lỗi tải lịch sử:', e);
+    }
+}
+
+// --------------------------------------------------------------------------
+// 6. ACCORDION CÀI ĐẶT NÂNG CAO
+// --------------------------------------------------------------------------
+function toggleAdvancedAccordion() {
+    const content = document.getElementById('advancedContent');
+    const arrow = document.getElementById('accordionAdvancedArrow');
+    if (!content) return;
+
+    if (content.style.display === 'none' || content.style.display === '') {
+        content.style.display = 'block';
+        if (arrow) arrow.classList.add('rotated');
+    } else {
+        content.style.display = 'none';
+        if (arrow) arrow.classList.remove('rotated');
+    }
+}
+
+async function fetchAutostartStatus() {
+    try {
+        const res = await fetch('/api/system/autostart');
+        const data = await res.json();
+        const chk = document.getElementById('chkAutostart');
+        const lbl = document.getElementById('lblAutostart');
+        if (chk && lbl) {
+            chk.checked = !!data.enabled;
+            lbl.innerText = data.enabled ? 'Đang BẬT tự khởi động' : 'Đang TẮT';
+        }
+    } catch (e) {
+        console.error('Lỗi autostart:', e);
+    }
+}
+
+async function onAutostartChanged(e) {
+    const enabled = e.target.checked;
+    const lbl = document.getElementById('lblAutostart');
+    lbl.innerText = 'Đang lưu...';
+    try {
+        const res = await fetch('/api/system/autostart', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        const data = await res.json();
+        lbl.innerText = data.enabled ? 'Đang BẬT tự khởi động' : 'Đang TẮT';
+        showToast(data.enabled ? '🚀 Đã BẬT tự khởi động cùng Windows!' : 'Đã TẮT tự khởi động!', 'info');
+    } catch (err) {
+        showToast('❌ Lỗi cài đặt autostart.', 'error');
+    }
+}
+
+async function manualCleanup() {
+    showToast('🧹 Đang quét dọn dẹp các file video cũ hơn 2 ngày...', 'info');
+    try {
+        const res = await fetch('/api/action/cleanup-old-videos', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message || '✅ Đã dọn dẹp xong video cũ!', 'success');
+    } catch (e) {
+        showToast('❌ Lỗi khi dọn dẹp.', 'error');
+    }
+}
+
+async function sendTestEmail() {
+    const btn = document.getElementById('btnSendTestEmail');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = '⏳ Đang gửi...';
+    }
+    showToast('📧 Đang gửi email kiểm thử tới thv.vinh@gmail.com...', 'info');
+    try {
+        const res = await fetch('/api/action/send-test-email', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            showToast('✅ Đã gửi email kiểm thử thành công tới thv.vinh@gmail.com!', 'success');
+        } else {
+            showToast(data.error || '❌ Không thể gửi email.', 'error');
+        }
+    } catch (e) {
+        showToast('❌ Lỗi kết nối máy chủ.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = '📧 Gửi Thử Email Báo Cáo';
+        }
+    }
+}
+
+async function performUpdate() {
+    const btn = document.getElementById('btnCheckUpdate');
+    btn.disabled = true;
+    btn.innerText = '⏳ Đang kiểm tra...';
+    showToast('🔄 Đang kết nối GitHub kiểm tra cập nhật...', 'info');
+    try {
+        const res = await fetch('/api/system/update', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message || 'Hoàn tất kiểm tra cập nhật.', 'success');
+        await fetchSystemVersion();
+    } catch (e) {
+        showToast('❌ Không thể cập nhật từ GitHub.', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = '🔄 Kiểm Tra & Cập Nhật';
+    }
+}
+
+async function fetchSystemVersion() {
+    try {
+        const res = await fetch('/api/system/version');
+        const data = await res.json();
+        const tag = document.getElementById('appVersion');
+        if (tag && data.commit) {
+            tag.innerText = `Bản: ${data.commit}`;
+        }
+    } catch (e) {}
+}
+
+// --------------------------------------------------------------------------
+// 7. WEBSOCKET NHẬT KÝ REALTIME
+// --------------------------------------------------------------------------
+function connectWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
+    
+    socket = new WebSocket(wsUrl);
+    
+    socket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            appendLogLine(data);
+        } catch (e) {}
+    };
+
+    socket.onclose = () => {
+        setTimeout(connectWebSocket, 3000);
+    };
 }
 
 function appendLogLine(log) {
-  if (!terminalBody) return;
-  const line = document.createElement('div');
-  line.className = `log-line ${log.level || 'INFO'}`;
-  line.innerHTML = `
-    <span class="log-time">[${log.time || ''}]</span>
-    <span class="log-cat">[${log.category || 'SYSTEM'}]</span>
-    <span class="log-msg">${escapeHtml(log.message || '')}</span>
-  `;
-  terminalBody.appendChild(line);
-  terminalBody.scrollTop = terminalBody.scrollHeight;
+    const terminal = document.getElementById('logsTerminal');
+    if (!terminal) return;
+
+    const div = document.createElement('div');
+    const lvl = (log.level || 'INFO').toLowerCase();
+    div.className = `log-line log-${lvl}`;
+    div.innerText = `[${log.time || ''}] [${log.category || 'SYSTEM'}] ${log.message || ''}`;
+    terminal.appendChild(div);
+    terminal.scrollTop = terminal.scrollHeight;
 }
 
-// Load Stats
-async function loadStats() {
-  try {
-    const res = await fetch('/api/stats');
-    const data = await res.json();
-    appState.stats = data;
+// --------------------------------------------------------------------------
+// 8. TOAST NOTIFICATION & HELPER
+// --------------------------------------------------------------------------
+let toastTimeout = null;
+function showToast(message, type = 'info') {
+    const toast = document.getElementById('toastBox');
+    const toastMsg = document.getElementById('toastMessage');
+    const toastIcon = document.getElementById('toastIcon');
+    if (!toast) return;
 
-    document.getElementById('statTotalVideos').innerText = data.total_videos || 0;
-    document.getElementById('statPostsToday').innerText = `${data.posts_today || 0} / ${data.max_posts_per_day || 3}`;
-    document.getElementById('statTotalSuccess').innerText = data.total_posts_success || 0;
-    
-    const autoStatusEl = document.getElementById('statAutoStatus');
-    const autoModeText = document.getElementById('autoModeText');
-    const autoModeIcon = document.getElementById('autoModeIcon');
-    const botBadgeText = document.getElementById('botStatusText');
-    const botBadge = document.getElementById('botStatusBadge');
+    toastIcon.innerText = type === 'success' ? '🌿' :
+                          type === 'warn' ? '⚠️' :
+                          type === 'error' ? '❌' : '🌱';
+    toastMsg.innerText = message;
 
-    if (data.auto_mode) {
-      autoStatusEl.innerText = 'Đang Bật';
-      autoStatusEl.style.color = 'var(--success)';
-      autoModeText.innerText = 'Lịch Tự Động: BẬT';
-      autoModeIcon.innerText = '▶️';
-    } else {
-      autoStatusEl.innerText = 'Đang Tắt';
-      autoStatusEl.style.color = 'var(--text-muted)';
-      autoModeText.innerText = 'Lịch Tự Động: TẮT';
-      autoModeIcon.innerText = '⏸️';
-    }
-
-    if (data.is_busy) {
-      botBadgeText.innerText = 'Đang xử lý tác vụ...';
-      botBadge.style.borderColor = 'var(--primary)';
-    } else {
-      botBadgeText.innerText = 'Sẵn sàng';
-      botBadge.style.borderColor = 'var(--border-color)';
-    }
-
-  } catch (err) {
-    console.error('Lỗi khi tải stats:', err);
-  }
-}
-
-// Load Videos
-async function loadVideos() {
-  try {
-    const res = await fetch('/api/videos');
-    const data = await res.json();
-    appState.videos = data.videos || [];
-    renderVideos(appState.videos);
-  } catch (err) {
-    console.error('Lỗi khi tải danh sách video:', err);
-  }
-}
-
-function renderVideos(videos) {
-  if (!videoGrid) return;
-  videoGrid.innerHTML = '';
-
-  if (videos.length === 0) {
-    videoGrid.innerHTML = `
-      <div class="empty-state" style="grid-column: 1 / -1;">
-        <div class="empty-state-icon">📭</div>
-        <h3>Chưa có video nào trong hệ thống</h3>
-        <p>Bấm nút <strong>"Quét HatBuiNho"</strong> hoặc <strong>"Test Tải Video Mới Nhất"</strong> để tải video về máy!</p>
-      </div>
-    `;
-    return;
-  }
-
-  videos.forEach(v => {
-    const filename = v.file_path ? v.file_path.split(/[\\/]/).pop() : '';
-    const mediaUrl = filename ? `/media/${filename}` : '';
-    
-    const statuses = {};
-    if (v.platform_statuses) {
-      v.platform_statuses.split(',').forEach(item => {
-        const [plat, stat] = item.split(':');
-        if (plat) statuses[plat] = stat;
-      });
-    }
-
-    const titleToShow = v.suggested_title || v.title || 'Video không tên';
-    const isCleaned = v.status === 'cleaned' || !v.file_path;
-    const hasPosts = v.post_attempts_count > 0 || Object.keys(statuses).length > 0;
-
-    const card = document.createElement('div');
-    card.className = 'video-card';
-    card.innerHTML = `
-      <div class="video-player-box">
-        ${mediaUrl ? `
-          <video controls preload="metadata" src="${mediaUrl}"></video>
-        ` : `
-          <div style="color: var(--text-dim); text-align: center; padding: 1rem;">
-            ${isCleaned ? '🧹 File video đã được dọn dẹp sau 2 ngày' : 'Chưa có file preview'}
-          </div>
-        `}
-      </div>
-      <div class="video-card-body">
-        <div class="video-title" title="${escapeHtml(titleToShow)}">
-          ${escapeHtml(titleToShow)}
-        </div>
-        ${v.hashtags ? `<div class="video-hashtags">${escapeHtml(v.hashtags)}</div>` : ''}
-        
-        <div class="video-script-preview">
-          ${escapeHtml(v.raw_script || 'Không có kịch bản gốc')}
-        </div>
-
-        <div class="video-meta-row">
-          <span>🕒 ${v.created_date_str || v.downloaded_at || ''}</span>
-          <div class="platform-badges">
-            <span class="p-badge ${statuses.youtube === 'success' ? 'success' : (statuses.youtube === 'failed' ? 'failed' : '')}" title="YouTube">YT</span>
-            <span class="p-badge ${statuses.tiktok === 'success' ? 'success' : (statuses.tiktok === 'failed' ? 'failed' : '')}" title="TikTok">TT</span>
-            <span class="p-badge ${statuses.facebook === 'success' ? 'success' : (statuses.facebook === 'failed' ? 'failed' : '')}" title="Facebook">FB</span>
-            <span class="p-badge ${statuses.instagram === 'success' ? 'success' : (statuses.instagram === 'failed' ? 'failed' : '')}" title="Instagram">IG</span>
-          </div>
-        </div>
-
-        <div class="video-actions" style="display: flex; flex-direction: column; gap: 8px;">
-          <div style="display: flex; gap: 8px;">
-            ${!isCleaned ? `
-              <button class="btn btn-primary btn-sm" style="flex: 1;" onclick="openPostModal(${v.id}, '${escapeHtml(titleToShow)}')">
-                🚀 Đăng Ngay
-              </button>
-            ` : `
-              <button class="btn btn-outline btn-sm" style="flex: 1; opacity: 0.6;" disabled>
-                ✅ Đã Dọn Dẹp
-              </button>
-            `}
-            
-            ${hasPosts ? `
-              <button class="btn btn-outline btn-sm" style="flex: 1; border-color: var(--primary); color: var(--primary);" onclick="openLinksModal(${v.id})">
-                🔗 Xem Link Đã Đăng
-              </button>
-            ` : ''}
-          </div>
-        </div>
-      </div>
-    `;
-    videoGrid.appendChild(card);
-  });
-}
-
-// Load Config
-async function loadConfig() {
-  try {
-    const res = await fetch('/api/config');
-    const cfg = await res.json();
-    appState.config = cfg;
-
-    const plats = cfg.platforms || {};
-    document.getElementById('cfgYtEnabled').checked = plats.youtube?.enabled ?? true;
-    document.getElementById('cfgTtEnabled').checked = plats.tiktok?.enabled ?? true;
-    document.getElementById('cfgFbEnabled').checked = plats.facebook?.enabled ?? true;
-    document.getElementById('cfgIgEnabled').checked = plats.instagram?.enabled ?? true;
-
-    const sched = cfg.schedule || {};
-    document.getElementById('cfgMaxPosts').value = sched.max_posts_per_day || 3;
-    document.getElementById('cfgTimeSlots').value = (sched.post_time_slots || ["08:00", "11:30", "19:30"]).join(', ');
-    document.getElementById('cfgScanInterval').value = sched.scan_interval_minutes || 60;
-
-    const cleanup = cfg.cleanup || {};
-    document.getElementById('cfgAutoCleanup').checked = cleanup.auto_cleanup ?? true;
-    document.getElementById('cfgRetentionDays').value = cleanup.retention_days ?? 2;
-
-    const customCap = cfg.custom_caption || {};
-    document.getElementById('cfgPrefixText').value = customCap.prefix_text || '';
-    document.getElementById('cfgAppendText').value = customCap.append_text || '';
-
-    const hat = cfg.hatbuinho || {};
-    document.getElementById('cfgHatUser').value = hat.username || 'cun';
-    document.getElementById('cfgHatPass').value = hat.password || '123';
-
-  } catch (err) {
-    console.error('Lỗi khi tải cấu hình:', err);
-  }
-}
-
-// Save Config
-async function saveConfig() {
-  const timeSlotsRaw = document.getElementById('cfgTimeSlots').value;
-  const timeSlots = timeSlotsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0);
-
-  const payload = {
-    platforms: {
-      youtube: { ...appState.config.platforms?.youtube, enabled: document.getElementById('cfgYtEnabled').checked },
-      tiktok: { ...appState.config.platforms?.tiktok, enabled: document.getElementById('cfgTtEnabled').checked },
-      facebook: { ...appState.config.platforms?.facebook, enabled: document.getElementById('cfgFbEnabled').checked },
-      instagram: { ...appState.config.platforms?.instagram, enabled: document.getElementById('cfgIgEnabled').checked }
-    },
-    schedule: {
-      ...appState.config.schedule,
-      max_posts_per_day: parseInt(document.getElementById('cfgMaxPosts').value) || 3,
-      post_time_slots: timeSlots,
-      scan_interval_minutes: parseInt(document.getElementById('cfgScanInterval').value) || 60
-    },
-    cleanup: {
-      auto_cleanup: document.getElementById('cfgAutoCleanup').checked,
-      retention_days: parseInt(document.getElementById('cfgRetentionDays').value) || 2
-    },
-    custom_caption: {
-      prefix_text: document.getElementById('cfgPrefixText').value,
-      append_text: document.getElementById('cfgAppendText').value
-    },
-    hatbuinho: {
-      ...appState.config.hatbuinho,
-      username: document.getElementById('cfgHatUser').value,
-      password: document.getElementById('cfgHatPass').value
-    }
-  };
-
-  try {
-    const res = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const result = await res.json();
-    if (result.success) {
-      alert('Đã lưu cấu hình thành công!');
-      loadConfig();
-      loadStats();
-    }
-  } catch (err) {
-    alert('Lỗi khi lưu cấu hình: ' + err.message);
-  }
-}
-
-// Event Listeners
-function setupEventListeners() {
-  document.getElementById('btnQuickScan').addEventListener('click', () => triggerScan(false));
-  document.getElementById('btnScanCustom').addEventListener('click', () => triggerScan(false));
-  document.getElementById('btnTestDownloadLatest').addEventListener('click', () => triggerScan(true));
-  document.getElementById('btnRefreshVideos').addEventListener('click', loadVideos);
-  document.getElementById('btnSaveConfig').addEventListener('click', saveConfig);
-  document.getElementById('btnToggleAuto').addEventListener('click', toggleAutoMode);
-  document.getElementById('btnClearLogs').addEventListener('click', () => {
-    terminalBody.innerHTML = '';
-  });
-  document.getElementById('btnManualCleanup').addEventListener('click', triggerManualCleanup);
-
-  // System Update Buttons
-  const btnHeaderUpdate = document.getElementById('btnHeaderUpdate');
-  if (btnHeaderUpdate) btnHeaderUpdate.addEventListener('click', triggerSystemUpdate);
-  const btnSystemUpdate = document.getElementById('btnSystemUpdate');
-  if (btnSystemUpdate) btnSystemUpdate.addEventListener('click', triggerSystemUpdate);
-
-  // AutoStart Switch Listener
-  const autoStartToggle = document.getElementById('cfgAutoStart');
-  if (autoStartToggle) {
-    autoStartToggle.addEventListener('change', (e) => {
-      handleAutoStartToggle(e.target.checked);
-    });
-  }
-
-  document.getElementById('btnClosePostModal').addEventListener('click', closePostModal);
-  document.getElementById('btnCancelPostModal').addEventListener('click', closePostModal);
-  document.getElementById('btnConfirmPost').addEventListener('click', executePostModal);
-
-  document.getElementById('btnCloseLinksModal').addEventListener('click', closeLinksModal);
-  document.getElementById('btnCloseLinksModalBtn').addEventListener('click', closeLinksModal);
-}
-
-// Load System Version & AutoStart Status
-async function loadSystemVersion() {
-  try {
-    const res = await fetch('/api/system/version');
-    const data = await res.json();
-    const verEl = document.getElementById('systemVersionText');
-    const dateEl = document.getElementById('systemCommitDate');
-    if (verEl) {
-      verEl.innerText = `Phiên bản: ${data.commit || 'v1.0.0'}`;
-    }
-    if (dateEl && data.date) {
-      dateEl.innerText = `(${data.date})`;
-    }
-  } catch (e) {
-    console.error('Không thể tải phiên bản hệ thống:', e);
-  }
-
-  // Load AutoStart status
-  try {
-    const res = await fetch('/api/system/autostart');
-    const data = await res.json();
-    const autoStartToggle = document.getElementById('cfgAutoStart');
-    if (autoStartToggle) {
-      autoStartToggle.checked = !!data.enabled;
-    }
-  } catch (e) {
-    console.error('Không thể tải trạng thái autostart:', e);
-  }
-}
-
-// Toggle AutoStart
-async function handleAutoStartToggle(enabled) {
-  try {
-    const res = await fetch('/api/system/autostart', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      const msg = data.enabled 
-        ? '✅ ĐÃ BẬT TỰ ĐỘNG KHỞI ĐỘNG CÙNG WINDOWS!\n\nMỗi khi bạn mở máy tính, phần mềm sẽ tự động chạy ngầm để đảm bảo kịp giờ đăng video.' 
-        : '🛑 ĐÃ TẮT TỰ ĐỘNG KHỞI ĐỘNG CÙNG WINDOWS.';
-      alert(msg);
-    }
-  } catch (e) {
-    alert('Lỗi khi thiết lập autostart: ' + e.message);
-  }
-}
-
-// Trigger System Update from GitHub
-async function triggerSystemUpdate() {
-  if (!confirm('Bạn có muốn kiểm tra và cập nhật mã nguồn mới nhất từ kho lưu trữ GitHub (origin/main) không?')) {
-    return;
-  }
-
-  const btnHeader = document.getElementById('btnHeaderUpdate');
-  const btnSettings = document.getElementById('btnSystemUpdate');
-  if (btnHeader) btnHeader.innerText = '⏳ Đang tải...';
-  if (btnSettings) btnSettings.innerText = '⏳ Đang cập nhật từ GitHub...';
-
-  try {
-    const res = await fetch('/api/system/update', { method: 'POST' });
-    const data = await res.json();
-    if (res.ok && data.success) {
-      alert(`✅ CẬP NHẬT THÀNH CÔNG!\n\n${data.message}`);
-      loadSystemVersion();
-      loadConfig();
-    } else {
-      alert(`❌ LỖI KHI CẬP NHẬT:\n\n${data.error || data.detail || 'Không thể kéo mã nguồn từ GitHub.'}`);
-    }
-  } catch (e) {
-    alert('Lỗi mạng khi cập nhật: ' + e.message);
-  } finally {
-    if (btnHeader) btnHeader.innerHTML = '<span>🔄</span> Cập Nhật';
-    if (btnSettings) btnSettings.innerHTML = '<span>🔄</span> Kiểm Tra & Cập Nhật Mã Nguồn Ngay';
-  }
-}
-
-// Trigger Scan
-async function triggerScan(forceLatest = false) {
-  try {
-    const res = await fetch('/api/action/scan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ force_latest: forceLatest })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      const modeText = forceLatest ? 'Chế độ TEST: Đang ép tải video mới nhất...' : 'Đang quét các video Chưa tải xuống...';
-      alert(modeText + ' Bạn có thể xem tiến trình tại tab "Nhật Ký Realtime"!');
-      document.querySelector('.tab-btn[data-tab="logs"]').click();
-    } else {
-      alert(data.detail || 'Lỗi khi kích hoạt quét.');
-    }
-  } catch (e) {
-    alert('Lỗi mạng: ' + e.message);
-  }
-}
-
-// Trigger Manual Cleanup
-async function triggerManualCleanup() {
-  const days = document.getElementById('cfgRetentionDays').value || 2;
-  if (!confirm(`Bạn có chắc muốn dọn dẹp các tệp video .mp4 đã đăng cũ hơn ${days} ngày không? (Dữ liệu bài đăng trong lịch sử vẫn được giữ nguyên)`)) {
-    return;
-  }
-
-  try {
-    const res = await fetch('/api/action/cleanup', { method: 'POST' });
-    const data = await res.json();
-    if (res.ok) {
-      const r = data.results || {};
-      alert(`Dọn dẹp hoàn tất!\n- Đã xóa: ${r.deleted_count || 0} tệp video\n- Giải phóng: ${r.freed_mb || 0} MB`);
-      loadVideos();
-      loadStats();
-    }
-  } catch (e) {
-    alert('Lỗi khi dọn dẹp: ' + e.message);
-  }
-}
-
-// Toggle Auto
-async function toggleAutoMode() {
-  try {
-    const res = await fetch('/api/action/toggle-scheduler', { method: 'POST' });
-    const data = await res.json();
-    loadStats();
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-// Open Login Browser
-async function openLoginUrl(url) {
-  try {
-    await fetch('/api/action/open-login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
-    });
-    alert('Đang mở trình duyệt Chrome. Bạn hãy đăng nhập tài khoản vào cửa sổ vừa mở nhé!');
-  } catch (e) {
-    alert('Lỗi: ' + e.message);
-  }
-}
-
-// Post Modal Logic
-function openPostModal(videoId, title) {
-  document.getElementById('modalVideoId').value = videoId;
-  document.getElementById('modalVideoTitleInput').value = title;
-  document.getElementById('postModal').classList.add('open');
-}
-
-function closePostModal() {
-  document.getElementById('postModal').classList.remove('open');
-}
-
-async function executePostModal() {
-  const videoId = parseInt(document.getElementById('modalVideoId').value);
-  const targets = [];
-  if (document.getElementById('postModalYt').checked) targets.push('youtube');
-  if (document.getElementById('postModalTt').checked) targets.push('tiktok');
-  if (document.getElementById('postModalFb').checked) targets.push('facebook');
-  if (document.getElementById('postModalIg').checked) targets.push('instagram');
-
-  if (targets.length === 0) {
-    alert('Vui lòng chọn ít nhất 1 nền tảng để đăng!');
-    return;
-  }
-
-  closePostModal();
-
-  try {
-    const res = await fetch('/api/action/post', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video_id: videoId, target_platforms: targets })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      alert('Đã gửi yêu cầu đăng video. Hệ thống đang tiến hành mở trình duyệt để upload...');
-      document.querySelector('.tab-btn[data-tab="logs"]').click();
-    } else {
-      alert(data.detail || 'Lỗi khi đăng bài.');
-    }
-  } catch (e) {
-    alert('Lỗi mạng: ' + e.message);
-  }
-}
-
-// Links Modal Logic
-async function openLinksModal(videoId) {
-  const modalBody = document.getElementById('linksModalBody');
-  modalBody.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);">Đang tải thông tin liên kết bài đăng...</div>';
-  document.getElementById('linksModal').classList.add('open');
-
-  try {
-    const res = await fetch(`/api/videos/${videoId}/history`);
-    const data = await res.json();
-    const video = data.video || {};
-    const posts = data.posts || [];
-
-    const platIcons = {
-      youtube: '▶️ YouTube Shorts',
-      tiktok: '🎵 TikTok',
-      facebook: '📘 Facebook Reels',
-      instagram: '📸 Instagram Reels'
-    };
-
-    let html = `
-      <div style="margin-bottom: 1.2rem; padding-bottom: 0.8rem; border-bottom: 1px solid var(--border-color);">
-        <h4 style="font-size: 1rem; color: #fff; margin-bottom: 4px;">${escapeHtml(video.suggested_title || video.title || 'Video')}</h4>
-        <small style="color: var(--text-muted);">Hashtags: ${escapeHtml(video.hashtags || '')}</small>
-      </div>
-    `;
-
-    if (posts.length === 0) {
-      html += `
-        <div style="text-align: center; padding: 1.5rem; color: var(--text-muted);">
-          Chưa có bài đăng nào được thực hiện cho video này.
-        </div>
-      `;
-    } else {
-      html += '<div style="display: flex; flex-direction: column; gap: 12px;">';
-      posts.forEach(p => {
-        const platName = platIcons[p.platform] || p.platform.toUpperCase();
-        const isSuccess = p.status === 'success';
-        const postUrl = p.post_url || '';
-
-        html += `
-          <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px 14px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <span style="font-weight: 600; font-size: 0.95rem;">${platName}</span>
-              <span style="font-size: 0.75rem; padding: 3px 8px; border-radius: 12px; font-weight: 600; background: ${isSuccess ? 'rgba(34,197,94,0.15); color: #4ade80;' : 'rgba(239,68,68,0.15); color: #f87171;'}">
-                ${isSuccess ? '✅ Thành công' : '❌ Thất bại'}
-              </span>
-            </div>
-            
-            ${isSuccess && postUrl ? `
-              <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 8px 10px; border-radius: 6px; font-size: 0.85rem;">
-                <a href="${escapeHtml(postUrl)}" target="_blank" style="color: var(--primary); text-decoration: none; word-break: break-all; flex: 1;">
-                  🔗 ${escapeHtml(postUrl)}
-                </a>
-                <button class="btn btn-outline btn-sm" style="padding: 3px 8px; font-size: 0.75rem;" onclick="copyToClipboard('${escapeHtml(postUrl)}')">
-                  📋 Copy
-                </button>
-              </div>
-            ` : (isSuccess ? `
-              <div style="font-size: 0.85rem; color: var(--success);">
-                Đã đăng thành công lên kênh của bạn.
-              </div>
-            ` : `
-              <div style="font-size: 0.85rem; color: #f87171;">
-                Lỗi: ${escapeHtml(p.error_message || 'Không xác định')}
-              </div>
-            `)}
-
-            <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 6px;">
-              🕒 Thời gian: ${escapeHtml(p.posted_at || '')}
-            </div>
-          </div>
-        `;
-      });
-      html += '</div>';
-    }
-
-    modalBody.innerHTML = html;
-
-  } catch (e) {
-    modalBody.innerHTML = `<div style="color: red; text-align: center;">Lỗi khi tải lịch sử: ${escapeHtml(e.message)}</div>`;
-  }
-}
-
-function closeLinksModal() {
-  document.getElementById('linksModal').classList.remove('open');
-}
-
-function copyToClipboard(text) {
-  navigator.clipboard.writeText(text).then(() => {
-    alert('Đã sao chép liên kết vào bộ nhớ tạm:\n' + text);
-  }).catch(() => {
-    prompt('Sao chép liên kết:', text);
-  });
+    toast.classList.add('show');
+    clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => {
+        toast.classList.remove('show');
+    }, 4500);
 }
 
 function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    if (!str) return '';
+    return str.replace(/[&<>'"]/g, 
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+    );
 }

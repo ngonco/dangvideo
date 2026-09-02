@@ -2,6 +2,8 @@ import random
 import re
 from typing import List, Optional
 
+from core.logger import logger
+
 # Kho Hashtag Đạo Lý, Phật Pháp, Lối Sống Đẹp chuẩn xu hướng
 HASHTAG_CATEGORIES = {
     "phat_phap_nhan_qua": [
@@ -70,5 +72,37 @@ class HashtagManager:
         final_tags = unique_selected[:count]
 
         return " ".join(final_tags)
+
+    @staticmethod
+    def _split_tags(blob: str) -> List[str]:
+        return [t for t in (blob or "").split() if t.strip().startswith("#")]
+
+    def merge_hashtags(self, dharma: str, extra: List[str]) -> str:
+        seen = set()
+        out: List[str] = []
+        for raw in self._split_tags(dharma) + list(extra or []):
+            tag = raw.strip()
+            if not tag:
+                continue
+            if not tag.startswith("#"):
+                tag = "#" + tag
+            key = tag.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(tag)
+        return " ".join(out)
+
+    def enrich_with_popular(self, title: str, script_text: str, dharma: str) -> str:
+        """Gộp hashtag đạo lý với 3–5 hashtag phổ biến từ AI. Thiếu API thì giữ kho đạo lý."""
+        from automation.ai_fallback import suggest_popular_hashtags
+
+        extra = suggest_popular_hashtags(title or "", script_text or "", dharma or "")
+        if not extra:
+            return dharma
+        merged = self.merge_hashtags(dharma, extra)
+        logger.info(f"Hashtag AI phổ biến: {' '.join(extra)}", "HASHTAG")
+        return merged
+
 
 hashtag_mgr = HashtagManager()

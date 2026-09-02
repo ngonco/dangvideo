@@ -1,11 +1,13 @@
 import os
 import re
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 from playwright.async_api import Page
 from automation.posters.base_poster import BasePoster
 from core.logger import logger
 from core.config_manager import config_mgr
+from core.schedule_helper import get_native_schedule
+from automation.ai_fallback import fail_with_ai, SCHEDULE_GOAL
 
 class YouTubePoster(BasePoster):
     def __init__(self):
@@ -76,7 +78,48 @@ class YouTubePoster(BasePoster):
         except Exception:
             return ""
 
-    async def post_video(self, page: Page, video_data: Dict[str, Any], privacy_override: str = "unlisted") -> Dict[str, Any]:
+    async def _detect_daily_upload_limit(self, page: Page) -> bool:
+        """YouTube nhét banner 'Daily upload limit reached' vào đáy bước Details, thường trong shadow DOM ytcp-*."""
+        try:
+            return bool(await page.evaluate("""() => {
+                const needles = [
+                    'daily upload limit reached',
+                    'daily upload limit',
+                    'đã đạt giới hạn tải lên',
+                    'giới hạn tải lên hàng ngày',
+                    'uploaded video will be processed in 24 hours'
+                ];
+                const hit = (s) => {
+                    const t = (s || '').toLowerCase();
+                    return needles.some(n => t.includes(n));
+                };
+                function scan(root) {
+                    if (!root) return false;
+                    if (hit(root.innerText || root.textContent || '')) return true;
+                    const children = root.querySelectorAll ? root.querySelectorAll('*') : [];
+                    for (const el of children) {
+                        if (hit(el.innerText || el.textContent || '')) return true;
+                        if (el.shadowRoot && scan(el.shadowRoot)) return true;
+                    }
+                    if (root.shadowRoot && scan(root.shadowRoot)) return true;
+                    return false;
+                }
+                return scan(document.body);
+            }"""))
+        except Exception:
+            return False
+
+    async def _abort_if_daily_limit(self, page: Page):
+        if await self._detect_daily_upload_limit(page):
+            logger.error("YouTube báo Daily upload limit reached (banner ở bước Details). Dừng kênh này, không bấm Next/Done.", "YOUTUBE")
+            return {
+                "success": False,
+                "error": "Đã đạt giới hạn tải lên YouTube trong ngày (Daily Limit). Cần đợi 24h hoặc xác minh tài khoản.",
+                "url": "",
+            }
+        return None
+
+    async def post_video(self, page: Page, video_data: Dict[str, Any], privacy_override: Optional[str] = None, schedule_time: Optional[str] = None) -> Dict[str, Any]:
         file_path = video_data.get("file_path", "")
         if not self.validate_video_file(file_path):
             return {"success": False, "error": "File video không hợp lệ"}
@@ -87,17 +130,44 @@ class YouTubePoster(BasePoster):
         description = self.format_caption(video_data)
         yt_config = config_mgr.get("platforms", {}).get("youtube", {})
         mark_ai = yt_config.get("mark_ai", True)
-        privacy = privacy_override or yt_config.get("privacy", "unlisted")
+        privacy = privacy_override or yt_config.get("privacy", "public")
+        
+        native = get_native_schedule(schedule_time or "")
+        should_schedule = native["enabled"]
+        target_schedule_time = native["time"]
+        target_dt = native["datetime"]
 
         try:
             logger.info("Mở YouTube Studio (https://studio.youtube.com)...", "YOUTUBE")
             await page.goto("https://studio.youtube.com", wait_until="domcontentloaded", timeout=45000)
             await asyncio.sleep(4)
 
-            # Check if login is required
-            if "accounts.google.com" in page.url:
-                logger.error("Chưa đăng nhập tài khoản Google/YouTube Studio. Vui lòng đăng nhập trước!", "YOUTUBE")
-                return {"success": False, "error": "Cần đăng nhập YouTube Studio"}
+            # Check if login is required and wait for user
+            if "accounts.google.com" in page.url or "signin" in page.url or not await page.locator('button#create-icon, ytcp-button#create-icon, button:has-text("CREATE"), button:has-text("TẠO"), button:has-text("Create"), button:has-text("Tạo")').first.is_visible(timeout=5000):
+                logger.warning("👉 Chưa đăng nhập YouTube Studio! Vui lòng hoàn tất đăng nhập trên cửa sổ trình duyệt (hệ thống sẽ tự động chờ tối đa 5 phút)...", "YOUTUBE")
+                try:
+                    await page.bring_to_front()
+                except Exception:
+                    pass
+
+                logged_in = False
+                for sec in range(0, 300, 3):
+                    if sec > 0 and sec % 30 == 0:
+                        logger.info(f"⏳ [YOUTUBE] Đang chờ bạn đăng nhập... (Đã qua {sec}/300s)", "YOUTUBE")
+                    await asyncio.sleep(3)
+                    
+                    if "accounts.google.com" not in page.url and "signin" not in page.url:
+                        btn = page.locator('button#create-icon, ytcp-button#create-icon, button:has-text("CREATE"), button:has-text("TẠO"), button:has-text("Create"), button:has-text("Tạo")').first
+                        if await btn.is_visible(timeout=2000):
+                            logged_in = True
+                            break
+
+                if not logged_in:
+                    logger.error("Hết thời gian chờ đăng nhập YouTube (5 phút). Vui lòng đăng nhập trước!", "YOUTUBE")
+                    return {"success": False, "error": "Hết thời gian chờ đăng nhập YouTube"}
+
+                logger.success("🎉 Đã phát hiện đăng nhập YouTube thành công! Tiếp tục tiến trình đăng video...", "YOUTUBE")
+                await asyncio.sleep(2)
 
             # Click Create / TẠO button
             logger.info("Tìm nút Tạo / Create trên YouTube Studio...", "YOUTUBE")
@@ -117,6 +187,9 @@ class YouTubePoster(BasePoster):
             await file_input.set_input_files(os.path.abspath(file_path))
             logger.info(f"Đã đính kèm video '{os.path.basename(file_path)}' lên YouTube Studio...", "YOUTUBE")
             await asyncio.sleep(5)
+            limited = await self._abort_if_daily_limit(page)
+            if limited:
+                return limited
 
             # Wait for upload modal / title textbox
             title_box = page.locator('div#title-textarea #textbox, #textbox[aria-label*="title"], #textbox[aria-label*="tiêu đề"]').first
@@ -125,6 +198,10 @@ class YouTubePoster(BasePoster):
             await title_box.fill(title)
             logger.info(f"Đã điền tiêu đề hoàn chỉnh: '{title}'", "YOUTUBE")
             await asyncio.sleep(1)
+
+            limited = await self._abort_if_daily_limit(page)
+            if limited:
+                return limited
 
             # Fill Description
             desc_box = page.locator('div#description-textarea #textbox, #textbox[aria-label*="description"], #textbox[aria-label*="mô tả"]').first
@@ -206,6 +283,9 @@ class YouTubePoster(BasePoster):
             # BƯỚC TIẾP THEO (NEXT 3 LẦN BẰNG JS TRỰC TIẾP ĐẢM BẢO CHUYỂN BƯỚC)
             # -------------------------------------------------------------
             for step_idx in range(3):
+                limited = await self._abort_if_daily_limit(page)
+                if limited:
+                    return limited
                 logger.info(f"Chuyển tiếp bước {step_idx + 1}/3 trên YouTube Studio...", "YOUTUBE")
                 await page.evaluate("""() => {
                     const nextBtn = document.getElementById('next-button') 
@@ -223,56 +303,164 @@ class YouTubePoster(BasePoster):
                 extracted_url = await self._extract_youtube_url(page)
 
             # -------------------------------------------------------------
-            # CHẾ ĐỘ HIỂN THỊ (VISIBILITY: UNLISTED / KHÔNG CÔNG KHAI)
+            # BƯỚC 4: LÊN LỊCH NATIVE 10:00 SÁNG MAI (CÔNG KHAI)
             # -------------------------------------------------------------
-            logger.info(f"Cài đặt chế độ hiển thị: {privacy.upper()}", "YOUTUBE")
-            try:
-                await page.evaluate(f"""() => {{
-                    const privacy = '{privacy.lower()}';
-                    let radio = null;
-                    if (privacy === 'public') {{
-                        radio = document.querySelector('tp-yt-paper-radio-button[name="PUBLIC"]');
-                    }} else if (privacy === 'private') {{
-                        radio = document.querySelector('tp-yt-paper-radio-button[name="PRIVATE"]');
-                    }} else {{
-                        radio = document.querySelector('tp-yt-paper-radio-button[name="UNLISTED"]');
-                    }}
-                    if (radio) {{
-                        radio.click();
-                        radio.setAttribute('aria-checked', 'true');
-                    }}
-                }}""")
-            except Exception:
-                pass
-            await asyncio.sleep(1.5)
+            if should_schedule:
+                logger.info(f"Cài đặt LÊN LỊCH XUẤT BẢN YouTube: {native['label']} (công khai)...", "YOUTUBE")
+                try:
+                    await page.evaluate("""() => {
+                        const schedRadio = document.querySelector('tp-yt-paper-radio-button[name="SCHEDULE"]')
+                                        || document.getElementById('schedule-radio-button')
+                                        || Array.from(document.querySelectorAll('tp-yt-paper-radio-button')).find(el => {
+                                            const t = (el.innerText || '').toLowerCase();
+                                            return t.includes('schedule') || t.includes('lên lịch');
+                                        });
+                        if (schedRadio) {
+                            schedRadio.click();
+                            schedRadio.setAttribute('aria-checked', 'true');
+                        }
+                    }""")
+                    await asyncio.sleep(2)
+
+                    day, month, year = native["day"], native["month"], native["year"]
+                    date_trigger = page.locator('#datepicker-trigger, ytcp-dropdown-trigger#datepicker-trigger, ytcp-datetime-picker #datepicker-trigger').first
+                    if await date_trigger.is_visible(timeout=5000):
+                        await date_trigger.click(force=True)
+                        await asyncio.sleep(1.2)
+                        picked = await page.evaluate(
+                            """({day, month, year}) => {
+                                const ariaHit = Array.from(document.querySelectorAll('[aria-label]')).find(el => {
+                                    const a = (el.getAttribute('aria-label') || '').toLowerCase();
+                                    const d = String(day);
+                                    return (a.includes(d) && (
+                                        a.includes('september') || a.includes('sep') ||
+                                        a.includes('thg 9') || a.includes('tháng 9') ||
+                                        a.includes(String(year))
+                                    )) && a.includes(d) && !el.getAttribute('aria-disabled');
+                                });
+                                if (ariaHit) { ariaHit.click(); return 'aria'; }
+
+                                const days = Array.from(document.querySelectorAll(
+                                    '.calendar-day, ytcp-date-picker [role="button"], ytcp-date-picker td, [class*="calendar"] span'
+                                ));
+                                const cell = days.find(d => {
+                                    const t = (d.innerText || '').trim();
+                                    const disabled = d.getAttribute('aria-disabled') === 'true' ||
+                                        (d.className || '').toString().includes('unselectable') ||
+                                        (d.className || '').toString().includes('disabled');
+                                    return t === String(day) && !disabled;
+                                });
+                                if (cell) { cell.click(); return 'day'; }
+                                return '';
+                            }""",
+                            {"day": day, "month": month, "year": year},
+                        )
+                        logger.info(f"Đã chọn ngày YouTube: {native['date_dmy']} ({picked or 'thử time'})", "YOUTUBE")
+                        await asyncio.sleep(0.8)
+
+                    time_trigger = page.locator('#time-of-day-trigger, ytcp-dropdown-trigger#time-of-day-trigger, input[aria-label*="time"], input[aria-label*="giờ"]').first
+                    if await time_trigger.is_visible(timeout=5000):
+                        await time_trigger.click(force=True)
+                        await asyncio.sleep(1)
+                        time_12 = native["time_12h_no_pad"]
+                        time_item = page.locator(
+                            f'tp-yt-paper-item:has-text("{target_schedule_time}"), '
+                            f'tp-yt-paper-item:has-text("{time_12}")'
+                        ).first
+                        if await time_item.is_visible(timeout=3000):
+                            await time_item.click(force=True)
+                        else:
+                            await page.keyboard.type(target_schedule_time, delay=40)
+                            await page.keyboard.press("Enter")
+                    logger.success(f"Đã lên lịch YouTube Shorts công khai lúc {native['label']}!", "YOUTUBE")
+                except Exception as ex_sched:
+                    logger.warning(f"Không thể chọn mốc giờ Schedule chi tiết, tiếp tục với lịch mặc định: {ex_sched}", "YOUTUBE")
+
+            else:
+                logger.info(f"Cài đặt chế độ hiển thị: {privacy.upper()}", "YOUTUBE")
+                try:
+                    await page.evaluate(f"""() => {{
+                        const privacy = '{privacy.lower()}';
+                        let radio = null;
+                        if (privacy === 'public') {{
+                            radio = document.querySelector('tp-yt-paper-radio-button[name="PUBLIC"]');
+                        }} else if (privacy === 'private') {{
+                            radio = document.querySelector('tp-yt-paper-radio-button[name="PRIVATE"]');
+                        }} else {{
+                            radio = document.querySelector('tp-yt-paper-radio-button[name="UNLISTED"]');
+                        }}
+                        if (radio) {{
+                            radio.click();
+                            radio.setAttribute('aria-checked', 'true');
+                        }}
+                    }}""")
+                except Exception:
+                    pass
+                await asyncio.sleep(1.5)
 
             if not extracted_url:
                 extracted_url = await self._extract_youtube_url(page)
 
             # -------------------------------------------------------------
-            # BẤM LƯU / XUẤT BẢN (SAVE / PUBLISH)
+            # BẤM LƯU / XUẤT BẢN / LÊN LỊCH (DONE / SCHEDULE)
             # -------------------------------------------------------------
-            logger.info("Bấm Lưu/Xuất bản video lên YouTube Shorts...", "YOUTUBE")
+            limited = await self._abort_if_daily_limit(page)
+            if limited:
+                return limited
+
+            action_name = "Lên lịch" if should_schedule else "Lưu/Xuất bản"
+            logger.info(f"Bấm {action_name} video lên YouTube Shorts...", "YOUTUBE")
             await page.evaluate("""() => {
                 const doneBtn = document.getElementById('done-button') 
                              || document.querySelector('ytcp-button#done-button') 
                              || Array.from(document.querySelectorAll('ytcp-button, button')).find(b => {
                                  const t = (b.innerText || '').toLowerCase();
-                                 return t.includes('save') || t.includes('publish') || t.includes('lưu') || t.includes('xuất bản');
+                                 return t.includes('save') || t.includes('publish') || t.includes('schedule') || t.includes('lưu') || t.includes('xuất bản') || t.includes('lên lịch');
                              });
                 if (doneBtn) doneBtn.click();
             }""")
-            await asyncio.sleep(6)
+            
+            # -------------------------------------------------------------
+            # XÁC THỰC KẾT QUẢ THỰC TẾ (CHỐNG TRẠNG THÁI ẢO)
+            # -------------------------------------------------------------
+            success_confirmed = False
+            for _ in range(15):
+                await asyncio.sleep(2)
+                
+                # 1. Kiểm tra nếu xuất hiện banner / dialog báo limit
+                if await self._detect_daily_upload_limit(page):
+                    logger.error("YouTube từ chối: Daily upload limit reached (Daily Limit)!", "YOUTUBE")
+                    return {
+                        "success": False,
+                        "error": "Đã đạt giới hạn tải lên YouTube trong ngày (Daily Limit). Cần đợi 24h hoặc xác minh tài khoản.",
+                        "url": "",
+                    }
+
+                # 2. Kiểm tra nếu xuất hiện hộp thoại thành công hoặc video published/scheduled
+                share_dialog = page.locator('ytcp-video-share-dialog, :has-text("Video published"), :has-text("Video scheduled"), :has-text("Đã xuất bản video"), :has-text("Đã lên lịch xuất bản video")').first
+                if await share_dialog.is_visible(timeout=500):
+                    success_confirmed = True
+                    break
+
+                # 3. Kiểm tra nếu hộp thoại upload đã đóng hoàn toàn
+                upload_dialog = page.locator('ytcp-uploads-dialog').first
+                if not await upload_dialog.is_visible(timeout=500):
+                    success_confirmed = True
+                    break
+
+            if not success_confirmed:
+                logger.error("❌ Hộp thoại YouTube Studio chưa đóng hoàn tất hoặc gặp lỗi xuất bản!", "YOUTUBE")
+                return await fail_with_ai(page, "youtube", "Hộp thoại YouTube Studio chưa đóng hoàn tất (có thể do lỗi xử lý hoặc bị giới hạn).", goal=SCHEDULE_GOAL)
 
             final_url = await self._extract_youtube_url(page)
             if final_url:
                 extracted_url = final_url
 
-            logger.success(f"Đăng thành công lên YouTube Shorts! Link: {extracted_url}", "YOUTUBE")
+            logger.success(f"Hoàn tất {action_name} YouTube Shorts! Link: {extracted_url}", "YOUTUBE")
             return {"success": True, "url": extracted_url, "error": ""}
 
         except Exception as ex:
             logger.error(f"Lỗi khi đăng lên YouTube: {str(ex)}", "YOUTUBE")
-            return {"success": False, "error": str(ex)}
+            return await fail_with_ai(page, "youtube", str(ex), goal=SCHEDULE_GOAL)
 
 youtube_poster = YouTubePoster()

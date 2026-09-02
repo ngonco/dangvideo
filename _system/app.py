@@ -57,11 +57,17 @@ class ConfigUpdateRequest(BaseModel):
     schedule: Optional[Dict[str, Any]] = None
     cleanup: Optional[Dict[str, Any]] = None
     browser: Optional[Dict[str, Any]] = None
+    schedule_publish: Optional[Dict[str, Any]] = None
     custom_caption: Optional[Dict[str, Any]] = None
 
 class PostVideoRequest(BaseModel):
     video_id: int
     target_platforms: Optional[List[str]] = None
+    schedule_time: Optional[str] = None
+
+class RunWorkflowRequest(BaseModel):
+    mode: Optional[str] = "normal"
+    schedule_time: Optional[str] = None
 
 class ScanRequest(BaseModel):
     max_items: Optional[int] = None
@@ -84,6 +90,11 @@ async def get_stats():
 async def get_videos(limit: int = 50, offset: int = 0):
     videos = db.list_videos(limit=limit, offset=offset)
     return {"videos": videos}
+
+@app.get("/api/history")
+async def get_history(limit: int = 100):
+    history = db.get_all_videos_with_latest_posts(limit=limit)
+    return {"history": history}
 
 @app.get("/api/videos/{video_id}/history")
 async def get_video_history(video_id: int):
@@ -121,16 +132,47 @@ async def trigger_post(req: PostVideoRequest, background_tasks: BackgroundTasks)
     if not video:
         raise HTTPException(status_code=404, detail="Không tìm thấy video.")
 
-    background_tasks.add_task(workflow_mgr.publish_video_to_platforms, req.video_id, req.target_platforms)
+    background_tasks.add_task(workflow_mgr.publish_video_to_platforms, req.video_id, req.target_platforms, req.schedule_time)
     return {"success": True, "message": f"Đã bắt đầu đăng video #{req.video_id} lên các nền tảng."}
 
+@app.post("/api/action/run-workflow")
+async def trigger_run_workflow(req: Optional[RunWorkflowRequest] = None):
+    if workflow_mgr.is_busy:
+        return {"success": False, "message": "Hệ thống đang bận thực hiện tác vụ khác. Vui lòng đợi..."}
+
+    pending = db.get_oldest_pending_video()
+    if not pending:
+        logger.info("Kho trống, ưu tiên tải 1 video 'Chưa tải xuống' trên HatBuiNho (hết thì lấy video mới nhất)...", "WORKFLOW")
+        new_vids = await workflow_mgr.scan_and_download(
+            max_items=1, force_latest=False, oldest_first=True, fallback_latest=True
+        )
+        if new_vids:
+            pending = db.get_oldest_pending_video()
+
+    if not pending:
+        return {"success": False, "message": "Không tìm thấy video nào để đăng."}
+
+    from core.schedule_helper import get_native_schedule
+    native = get_native_schedule()
+    sched_time = req.schedule_time if req and req.schedule_time else native["time"]
+    res = await workflow_mgr.publish_video_to_platforms(
+        pending["id"], schedule_time=sched_time, enforce_ig_gap=True
+    )
+    v_title = pending.get("suggested_title") or pending.get("title")
+    return {
+        "success": True,
+        "message": f"Đã hoàn thành phân phối đăng video #{pending['id']}: '{v_title}' (Hẹn native: {native['label']})!",
+        "details": res.get("details", {})
+    }
+
 @app.post("/api/action/cleanup")
+@app.post("/api/action/cleanup-old-videos")
 async def trigger_cleanup():
     cleanup_cfg = config_mgr.get("cleanup", {})
     retention_days = cleanup_cfg.get("retention_days", 2)
     res = db.clean_old_posted_videos(retention_days=retention_days)
-    logger.info(f"Thực hiện dọn dẹp thủ công: Đã xóa {res['deleted_count']} video cũ (> {retention_days} ngày), giải phóng {res['freed_mb']} MB.", "CLEANUP")
-    return {"success": True, "results": res}
+    logger.info(f"Thực hiện dọn dẹp: Đã xóa {res['deleted_count']} video cũ (> {retention_days} ngày), giải phóng {res['freed_mb']} MB.", "CLEANUP")
+    return {"success": True, "message": f"Đã dọn dẹp {res['deleted_count']} video cũ, giải phóng {res['freed_mb']} MB.", "results": res}
 
 @app.post("/api/action/open-login")
 async def open_login(req: OpenLoginRequest, background_tasks: BackgroundTasks):
@@ -148,6 +190,56 @@ async def toggle_scheduler():
     status_str = "BẬT" if new_auto else "TẮT"
     logger.info(f"Đã {status_str} chế độ tự động đăng theo lịch.", "SCHEDULER")
     return {"success": True, "auto_mode": new_auto}
+
+class TimeSlotsRequest(BaseModel):
+    time_slots: List[str]
+
+@app.post("/api/schedule/timeslots")
+async def update_time_slots(req: TimeSlotsRequest):
+    sched_cfg = config_mgr.get("schedule", {})
+    slots = sorted(list(set([s.strip() for s in req.time_slots if s.strip()])))
+    sched_cfg["post_time_slots"] = slots
+    config_mgr.update({"schedule": sched_cfg})
+    task_scheduler.reload_jobs()
+    logger.info(f"Đã cập nhật khung giờ hẹn đăng: {', '.join(slots)}", "SCHEDULER")
+    return {"success": True, "time_slots": slots}
+
+@app.get("/api/queue/summary")
+async def get_queue_summary():
+    slots = config_mgr.get("schedule", {}).get("post_time_slots", ["08:00", "11:30", "19:30"])
+    summary = db.get_queue_summary(slots_per_day=len(slots))
+    return {"success": True, "queue": summary}
+
+@app.post("/api/action/batch-download-queue")
+async def batch_download_queue():
+    from automation.workflow_manager import workflow_mgr
+    res = await workflow_mgr.batch_download_to_queue(max_items=50)
+    return res
+
+@app.get("/api/accounts/status")
+async def get_accounts_status():
+    from automation.browser_engine import browser_engine
+    statuses = await browser_engine.get_login_statuses()
+    return {"success": True, "statuses": statuses}
+
+@app.post("/api/browser/open-login/{platform}")
+async def open_browser_login(platform: str):
+    from automation.browser_engine import browser_engine
+    try:
+        # Run login opener without blocking HTTP request
+        asyncio.create_task(browser_engine.open_login_page(platform))
+        return {"success": True, "message": f"Đang mở trình duyệt để đăng nhập {platform.upper()}"}
+    except Exception as ex:
+        return {"success": False, "error": str(ex)}
+
+@app.post("/api/action/send-test-email")
+async def send_test_email():
+    from core.email_reporter import email_reporter
+    success = email_reporter.send_test_email()
+    if success:
+        return {"success": True, "message": "Đã gửi email kiểm thử thành công tới thv.vinh@gmail.com!"}
+    else:
+        return {"success": False, "error": "Không thể gửi email kiểm thử. Vui lòng kiểm tra kết nối mạng."}
 
 @app.get("/api/system/version")
 async def get_system_version():

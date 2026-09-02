@@ -20,9 +20,16 @@ downloads/*.webm
 downloads/*.mov
 !downloads/.gitkeep
 
+# Local secrets (Vilao API key, etc.)
+.env
+.env.local
+
 # Local SQLite Database (Local post history)
 data.db
 *.db-journal
+_system/data.db
+_system/debug_screenshots/
+temp_record_action/
 
 # PyInstaller build outputs
 build/

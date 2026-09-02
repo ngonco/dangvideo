@@ -90,14 +90,46 @@ class Database:
                 return dict(row)
             return None
 
-    def get_video_by_hatbuinho_id(self, hatbuinho_id: str) -> Optional[Dict[str, Any]]:
+    def get_oldest_pending_video(self) -> Optional[Dict[str, Any]]:
+        """Lấy video chưa đăng cũ nhất trong kho hàng đợi (FIFO)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM videos WHERE hatbuinho_id = ?", (hatbuinho_id,))
+            cursor.execute("""
+            SELECT * FROM videos 
+            WHERE status = 'downloaded' 
+              AND file_path IS NOT NULL 
+              AND file_path != ''
+            ORDER BY id ASC 
+            LIMIT 1
+            """)
             row = cursor.fetchone()
             if row:
                 return dict(row)
             return None
+
+    def get_pending_videos_count(self) -> int:
+        """Đếm tổng số video đang chờ trong hàng đợi"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT COUNT(*) FROM videos 
+            WHERE status = 'downloaded' 
+              AND file_path IS NOT NULL 
+              AND file_path != ''
+            """)
+            return cursor.fetchone()[0]
+
+    def get_queue_summary(self, slots_per_day: int = 3) -> Dict[str, Any]:
+        """Tổng hợp thông tin kho hàng đợi và số ngày dự kiến đăng"""
+        import math
+        total = self.get_pending_videos_count()
+        slots = max(1, slots_per_day)
+        estimated_days = math.ceil(total / slots) if total > 0 else 0
+        return {
+            "total_pending": total,
+            "slots_per_day": slots,
+            "estimated_days": estimated_days
+        }
 
     def list_videos(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         with self.get_connection() as conn:
@@ -144,6 +176,44 @@ class Database:
                 """, (limit,))
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
+
+    def get_all_videos_with_latest_posts(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Lấy toàn bộ danh sách video kèm kết quả mới nhất cho từng nền tảng, không bị trùng lặp"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT id, hatbuinho_id, title, suggested_title, file_path, status, created_date_str, downloaded_at
+            FROM videos
+            ORDER BY id DESC
+            LIMIT ?
+            """, (limit,))
+            videos = [dict(r) for r in cursor.fetchall()]
+
+            for v in videos:
+                vid_id = v["id"]
+                cursor.execute("""
+                SELECT platform, status, post_url, error_message, posted_at
+                FROM post_history
+                WHERE video_id = ?
+                ORDER BY id DESC
+                """, (vid_id,))
+                posts = [dict(r) for r in cursor.fetchall()]
+
+                # Deduplicate: chỉ giữ kết quả mới nhất cho mỗi platform
+                latest_platforms = {}
+                for p in posts:
+                    plat = p["platform"]
+                    if plat not in latest_platforms:
+                        latest_platforms[plat] = p
+
+                v["platforms"] = latest_platforms
+
+                if posts:
+                    v["time"] = posts[0]["posted_at"]
+                else:
+                    v["time"] = v.get("downloaded_at") or v.get("created_date_str") or ""
+
+            return videos
 
     def clean_old_posted_videos(self, retention_days: int = 2) -> Dict[str, Any]:
         """Tự động dọn dẹp các tệp video .mp4 đã đăng sau số ngày chỉ định (mặc định 2 ngày)"""
@@ -218,5 +288,31 @@ class Database:
                 "total_posts_failed": total_posts_failed,
                 "posts_today": posts_today
             }
+
+    def get_last_success_at(self, platform: str) -> Optional[datetime]:
+        """Thời điểm success gần nhất của một nền tảng (posted_at)."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT posted_at FROM post_history
+                WHERE platform = ? AND status = 'success'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (platform,),
+            )
+            row = cursor.fetchone()
+            if not row or not row[0]:
+                return None
+            raw = str(row[0]).replace("T", " ").split(".")[0]
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+                try:
+                    return datetime.strptime(raw, fmt)
+                except ValueError:
+                    continue
+            try:
+                return datetime.fromisoformat(str(row[0]))
+            except Exception:
+                return None
 
 db = Database()

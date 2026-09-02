@@ -65,6 +65,24 @@ class TaskScheduler:
         )
         logger.info("Đã lập lịch tự động dọn dẹp video đã đăng cũ (> 2 ngày) hàng ngày lúc 00:05.", "SCHEDULER")
 
+        # Daily summary email report job at 22:00
+        self.scheduler.add_job(
+            self._scheduled_daily_email_report,
+            trigger=CronTrigger(hour=22, minute=0),
+            id="daily_email_report_job",
+            replace_existing=True
+        )
+        logger.info("Đã lập lịch tự động gửi báo cáo tổng kết hàng ngày qua Email lúc 22:00.", "SCHEDULER")
+
+    async def _scheduled_daily_email_report(self):
+        """Tự động tổng hợp và gửi email báo cáo tổng kết video đã đăng trong ngày"""
+        try:
+            from core.email_reporter import email_reporter
+            logger.info("Bắt đầu tổng hợp và gửi báo cáo ngày qua Email...", "EMAIL")
+            email_reporter.send_daily_summary()
+        except Exception as ex:
+            logger.warning(f"Lỗi gửi báo cáo ngày qua email: {ex}", "EMAIL")
+
     async def _scheduled_cleanup(self):
         """Tự động dọn dẹp các tệp video đã đăng cũ hơn N ngày (mặc định 2 ngày)"""
         cleanup_cfg = config_mgr.get("cleanup", {})
@@ -89,40 +107,51 @@ class TaskScheduler:
         await self._auto_process_next_video()
 
     async def _scheduled_scan_and_post_check(self):
-        """Quét định kỳ từ HatBuiNho"""
+        """Quét định kỳ từ HatBuiNho (bỏ qua video tạo hôm nay)"""
         sched_cfg = config_mgr.get("schedule", {})
         if not sched_cfg.get("auto_mode", False):
             return
 
         logger.info("Bắt đầu quét định kỳ video mới từ hatbuinho.com...", "SCHEDULER")
-        await workflow_mgr.scan_and_download(max_items=2)
+        await workflow_mgr.scan_and_download(max_items=2, exclude_today=True)
 
     async def _auto_process_next_video(self):
         sched_cfg = config_mgr.get("schedule", {})
-        max_today = sched_cfg.get("max_posts_per_day", 3)
+        max_today = sched_cfg.get("max_posts_per_day", 10)
         stats = db.get_stats()
 
         if stats["posts_today"] >= max_today:
-            logger.info(f"Đã đạt giới hạn đăng trong ngày ({stats['posts_today']}/{max_today} video). Tạm hoãn đăng tiếp.", "SCHEDULER")
+            logger.info(f"Đã đạt giới hạn đăng trong ngày ({stats['posts_today']}/{max_today} video). Tạm hoãn đợt đăng tiếp theo.", "SCHEDULER")
             return
 
-        # Find first downloaded video that has not been fully posted
-        videos = db.list_videos(limit=20)
-        pending_video = None
-        for v in videos:
-            if v.get("status") == "downloaded":
-                pending_video = v
-                break
+        # Mỗi lần kích hoạt chỉ 1 video — không bù hàng loạt khi máy vừa mở lại
+        min_delay = int(sched_cfg.get("min_delay_between_posts_minutes", 180) or 180)
+        last_ig = db.get_last_success_at("instagram")
+        if last_ig:
+            from datetime import datetime
+            elapsed_min = (datetime.now() - last_ig).total_seconds() / 60.0
+            if elapsed_min < min_delay:
+                logger.info(
+                    f"Instagram vừa đăng cách đây {elapsed_min:.0f} phút (< {min_delay} phút). "
+                    "Vẫn đăng 1 video cho YT/TikTok/Facebook; Instagram sẽ được bỏ qua trong workflow.",
+                    "SCHEDULER",
+                )
+
+        # 1. Tìm video chưa đăng cũ nhất trong kho hàng đợi (FIFO)
+        pending_video = db.get_oldest_pending_video()
+
+        # 2. Nếu trong kho chưa có video -> Quét tải đúng 1 video cũ nhất từ HatBuiNho (chỉ tải video từ hôm qua trở về trước)
+        if not pending_video:
+            logger.info("Kho hàng đợi đang rỗng, tiến hành quét tải 1 video 'Chưa tải xuống' cũ nhất từ HatBuiNho (lọc an toàn: bỏ qua video tạo hôm nay)...", "SCHEDULER")
+            new_vids = await workflow_mgr.scan_and_download(max_items=1, force_latest=False, oldest_first=True, exclude_today=True)
+            if new_vids:
+                pending_video = db.get_oldest_pending_video()
 
         if pending_video:
-            logger.info(f"Tự động chọn video ID #{pending_video['id']} để đăng tải...", "SCHEDULER")
-            await workflow_mgr.publish_video_to_platforms(pending_video["id"])
+            v_title = pending_video.get("suggested_title") or pending_video.get("title")
+            logger.info(f"🚀 Tự động đăng video #{pending_video['id']}: '{v_title}'...", "SCHEDULER")
+            await workflow_mgr.publish_video_to_platforms(pending_video["id"], enforce_ig_gap=True)
         else:
-            logger.info("Chưa có video nào đang chờ đăng trong hàng đợi. Tiến hành quét hatbuinho...", "SCHEDULER")
-            new_vids = await workflow_mgr.scan_and_download(max_items=1)
-            if new_vids:
-                first_vid = db.get_video_by_hatbuinho_id(new_vids[0]["hatbuinho_id"])
-                if first_vid:
-                    await workflow_mgr.publish_video_to_platforms(first_vid["id"])
+            logger.info("Hiện không có video hợp lệ (từ hôm qua trở về trước) cần đăng trên HatBuiNho.", "SCHEDULER")
 
 task_scheduler = TaskScheduler()
