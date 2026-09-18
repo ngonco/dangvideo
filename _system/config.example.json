@@ -21,8 +21,9 @@
     "facebook": {
       "enabled": true,
       "privacy": "public",
-      "target_type": "professional_dashboard",
+      "target_type": "personal",
       "page_name": "",
+      "page_url": "",
       "mark_ai": true,
       "name": "Facebook Reels"
     },

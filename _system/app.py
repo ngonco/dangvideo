@@ -68,6 +68,7 @@ class PostVideoRequest(BaseModel):
 class RunWorkflowRequest(BaseModel):
     mode: Optional[str] = "normal"
     schedule_time: Optional[str] = None
+    force_repost: Optional[bool] = False
 
 class ScanRequest(BaseModel):
     max_items: Optional[int] = None
@@ -117,6 +118,16 @@ async def update_config(req: ConfigUpdateRequest):
         headless_changed = "headless" in updates["browser"]
         current_browser.update(updates["browser"])
         updates["browser"] = current_browser
+    if isinstance(updates.get("platforms"), dict):
+        current_platforms = dict(config_mgr.get("platforms") or {})
+        for plat, p_cfg in updates["platforms"].items():
+            if isinstance(p_cfg, dict) and isinstance(current_platforms.get(plat), dict):
+                merged = dict(current_platforms[plat])
+                merged.update(p_cfg)
+                current_platforms[plat] = merged
+            else:
+                current_platforms[plat] = p_cfg
+        updates["platforms"] = current_platforms
     config_mgr.update(updates)
     task_scheduler.reload_jobs()
     logger.info("Đã cập nhật cấu hình hệ thống.", "CONFIG")
@@ -130,6 +141,19 @@ async def update_config(req: ConfigUpdateRequest):
         else:
             await browser_engine.close()
     return {"success": True, "config": config_mgr.config}
+
+@app.get("/api/facebook/pages")
+async def get_facebook_pages():
+    """Quét danh sách các Fanpage mà tài khoản Facebook đang quản trị."""
+    if workflow_mgr.is_busy:
+        raise HTTPException(status_code=400, detail="Hệ thống đang bận thực hiện tác vụ khác.")
+    from automation.posters.facebook_poster import facebook_poster
+    try:
+        pages = await facebook_poster.scan_managed_pages()
+        return {"success": True, "pages": pages}
+    except Exception as e:
+        logger.error(f"Lỗi khi quét Fanpage Facebook: {e}", "FACEBOOK")
+        return {"success": False, "error": str(e), "pages": []}
 
 @app.post("/api/action/scan")
 async def trigger_scan(req: ScanRequest, background_tasks: BackgroundTasks):
@@ -157,17 +181,35 @@ async def trigger_run_workflow(req: Optional[RunWorkflowRequest] = None):
     if workflow_mgr.is_busy:
         return {"success": False, "message": "Hệ thống đang bận thực hiện tác vụ khác. Vui lòng đợi..."}
 
-    pending = db.get_oldest_pending_video()
+    force_repost = bool(req and req.force_repost)
+
+    pending = None
+    if not force_repost:
+        pending = db.get_oldest_pending_video()
+
     if not pending:
-        logger.info("Kho trống, ưu tiên tải 1 video 'Chưa tải xuống' trên HatBuiNho (hết thì lấy video mới nhất)...", "WORKFLOW")
+        logger.info(
+            f"Kho trống, quét video 'Chưa tải xuống' trên HatBuiNho{' (ép tải lại: BẬT)' if force_repost else ' (chống trùng: BẬT)'}...",
+            "WORKFLOW"
+        )
         new_vids = await workflow_mgr.scan_and_download(
-            max_items=1, force_latest=False, oldest_first=True, fallback_latest=True
+            max_items=1,
+            force_latest=force_repost,
+            oldest_first=True,
+            fallback_latest=force_repost,
+            force_repost=force_repost,
         )
         if new_vids:
             pending = db.get_oldest_pending_video()
 
     if not pending:
-        return {"success": False, "message": "Không tìm thấy video nào để đăng."}
+        if not force_repost:
+            return {
+                "success": False,
+                "need_confirmation": True,
+                "message": "Tất cả video trên HatBuiNho đều đã được đăng lên các nền tảng.\n\nBạn có chắc chắn muốn ép tải và đăng lại video gần nhất không?",
+            }
+        return {"success": False, "message": "Không tìm thấy video nào để đăng trên HatBuiNho."}
 
     from core.schedule_helper import get_native_schedule
     native = get_native_schedule()
@@ -226,6 +268,55 @@ async def get_queue_summary():
     slots = config_mgr.get("schedule", {}).get("post_time_slots", ["08:00", "11:30", "19:30"])
     summary = db.get_queue_summary(slots_per_day=len(slots))
     return {"success": True, "queue": summary}
+
+@app.get("/api/queue/videos")
+async def get_queue_videos():
+    videos = db.get_pending_videos_list()
+    for v in videos:
+        fpath = v.get("file_path") or ""
+        v["file_exists"] = bool(fpath and os.path.exists(fpath))
+        v["filename"] = os.path.basename(fpath) if fpath else ""
+        fsize = v.get("file_size") or 0
+        v["file_size_mb"] = round(fsize / (1024 * 1024), 2)
+    return {"success": True, "videos": videos}
+
+@app.post("/api/videos/{video_id}/open-player")
+async def open_video_in_player(video_id: int):
+    video = db.get_video_by_id(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Không tìm thấy video trong hệ thống.")
+    file_path = video.get("file_path")
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Tệp video không còn tồn tại trên máy tính (có thể đã bị xóa hoặc dọn dẹp).")
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(file_path)
+        else:
+            subprocess.Popen(["xdg-open", file_path])
+        return {"success": True, "message": f"Đã mở tệp video: {os.path.basename(file_path)}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Không thể mở tệp video: {str(e)}")
+
+@app.delete("/api/videos/{video_id}/queue")
+async def delete_queue_video(video_id: int):
+    success = db.remove_video_from_queue(video_id)
+    if success:
+        logger.info(f"Đã xóa video #{video_id} khỏi kho hàng đợi theo yêu cầu của người dùng.", "QUEUE")
+        return {"success": True, "message": f"Đã xóa video #{video_id} khỏi kho hàng đợi."}
+    raise HTTPException(status_code=404, detail="Không tìm thấy video hoặc không thể xóa.")
+
+@app.post("/api/action/open-downloads-folder")
+async def open_downloads_folder():
+    if not os.path.exists(DOWNLOADS_DIR):
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(DOWNLOADS_DIR)
+        else:
+            subprocess.Popen(["xdg-open", DOWNLOADS_DIR])
+        return {"success": True, "message": "Đã mở thư mục downloads"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Không thể mở thư mục downloads: {str(e)}")
 
 @app.post("/api/action/batch-download-queue")
 async def batch_download_queue():

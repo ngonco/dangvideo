@@ -21,7 +21,7 @@
                 </div>
             </div>
             <div class="header-status">
-                <span class="version-tag" id="appVersion">Bản 1.4.0</span>
+                <span class="version-tag" id="appVersion">Bản 1.6.0</span>
                 <span class="badge badge-success" id="serverStatusBadge">🟢 Máy Chủ Đang Chạy</span>
             </div>
         </header>
@@ -211,7 +211,38 @@
                                     <span class="account-status-badge badge-pending" id="statusFacebook">⚪ Đang kiểm tra...</span>
                                 </div>
                             </div>
-                            <p class="account-desc">Tự động đăng Reels lên Trang cá nhân hoặc Fanpage Facebook của bạn.</p>
+                            <p class="account-desc">Tự động đăng Reels lên Trang cá nhân hoặc Fanpage bạn chọn.</p>
+                            
+                            <!-- BỘ CHỌN MỤC TIÊU: TRANG CÁ NHÂN HOẶC FANPAGE -->
+                            <div class="fb-target-selector" style="margin: 10px 0; padding: 10px; background: rgba(0,0,0,0.22); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+                                <div style="font-size: 0.82rem; font-weight: 600; color: #94a3b8; margin-bottom: 8px;">
+                                    🎯 Nơi đăng video:
+                                </div>
+                                <div style="display: flex; gap: 16px; margin-bottom: 8px;">
+                                    <label style="display: flex; align-items: center; gap: 6px; font-size: 0.88rem; cursor: pointer; color: #f8fafc;">
+                                        <input type="radio" name="fbTargetType" id="fbTargetPersonal" value="personal" checked onchange="onFbTargetTypeChange('personal')">
+                                        <span>👤 Trang cá nhân</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; gap: 6px; font-size: 0.88rem; cursor: pointer; color: #f8fafc;">
+                                        <input type="radio" name="fbTargetType" id="fbTargetFanpage" value="fanpage" onchange="onFbTargetTypeChange('fanpage')">
+                                        <span>🚩 Fanpage</span>
+                                    </label>
+                                </div>
+
+                                <!-- KHỐI CHỌN FANPAGE (Ẩn khi chọn Trang cá nhân) -->
+                                <div id="fbPagePickerBox" style="display: none; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,0.1);">
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <select id="fbPageSelect" class="form-control" style="flex: 1; padding: 7px 10px; border-radius: 6px; background: #1e293b; color: #f8fafc; border: 1px solid #334155; font-size: 0.85rem;" onchange="onFbPageChange()">
+                                            <option value="">-- Bấm "Quét Trang" để tải danh sách --</option>
+                                        </select>
+                                        <button class="btn btn-secondary" id="btnScanFbPages" onclick="scanFacebookPages()" title="Quét danh sách Fanpage bạn đang quản lý" style="padding: 7px 12px; font-size: 0.82rem; white-space: nowrap; border-radius: 6px; cursor: pointer;">
+                                            🔄 Quét Trang
+                                        </button>
+                                    </div>
+                                    <div id="fbPageStatusNote" style="margin-top: 6px; font-size: 0.78rem; color: #38bdf8; min-height: 1.1em;"></div>
+                                </div>
+                            </div>
+
                             <button class="btn btn-login-channel btn-fb" onclick="openLoginBrowser('facebook')">
                                 <span>🌐 Mở Trình Duyệt Đăng Nhập Facebook</span>
                             </button>
@@ -235,7 +266,32 @@
                 </div>
             </section>
 
-            <!-- KHỐI 3: DANH SÁCH VIDEO ĐÃ ĐĂNG -->
+            <!-- KHỐI 3: KHO VIDEO CHỜ ĐĂNG (HÀNG ĐỢI) -->
+            <section class="card queue-section" id="queueSection">
+                <div class="section-title-wrap queue-section-header">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span class="section-badge-num">📦</span>
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <h2>Kho Video Chờ Đăng (Hàng Đợi)</h2>
+                                <span class="badge badge-queue-count" id="badgeQueueCount">0 video</span>
+                            </div>
+                            <p class="section-guide-text">Các video đã tải về máy, sẵn sàng tự động đăng theo lịch hoặc bấm xem/đăng ngay tại đây.</p>
+                        </div>
+                    </div>
+                    <div class="queue-actions-header">
+                        <button class="btn btn-secondary btn-sm" id="btnOpenDownloadsFolder" type="button">
+                            📁 Mở Thư Mục Video (.mp4)
+                        </button>
+                    </div>
+                </div>
+
+                <div class="queue-container" id="queueContainer">
+                    <div class="queue-loading-msg" id="queueLoadingMsg">Đang kiểm tra kho video chờ đăng...</div>
+                </div>
+            </section>
+
+            <!-- KHỐI 4: DANH SÁCH VIDEO ĐÃ ĐĂNG -->
             <section class="card history-section">
                 <div class="section-title-wrap">
                     <span class="section-badge-num">📋</span>

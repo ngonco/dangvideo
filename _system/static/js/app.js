@@ -20,6 +20,7 @@ async function initApp() {
     await fetchSystemVersion();
     await fetchConfigAndState();
     await fetchQueueSummary();
+    await fetchQueueVideos();
     await fetchAccountsStatus();
     await fetchHistory();
     await fetchAutostartStatus();
@@ -28,6 +29,7 @@ async function initApp() {
     window.addEventListener('focus', () => {
         fetchAccountsStatus();
         fetchQueueSummary();
+        fetchQueueVideos();
     });
 
     // Tự động làm mới lịch sử và hàng đợi mỗi 30s
@@ -35,6 +37,7 @@ async function initApp() {
         fetchHistory();
         fetchAccountsStatus();
         fetchQueueSummary();
+        fetchQueueVideos();
     }, 30000);
 }
 
@@ -74,6 +77,12 @@ function setupEventListeners() {
     const btnAddSlot = document.getElementById('btnAddSlot');
     if (btnAddSlot) {
         btnAddSlot.addEventListener('click', addTimeSlot);
+    }
+
+    // Nút Mở Thư Mục Downloads
+    const btnOpenDownloadsFolder = document.getElementById('btnOpenDownloadsFolder');
+    if (btnOpenDownloadsFolder) {
+        btnOpenDownloadsFolder.addEventListener('click', openDownloadsFolder);
     }
 
     // Accordion Đăng Nhập Tài Khoản
@@ -163,6 +172,14 @@ async function fetchConfigAndState() {
             if (cfg.hatbuinho) {
                 document.getElementById('hbnUsername').value = cfg.hatbuinho.username || '';
                 document.getElementById('hbnPassword').value = cfg.hatbuinho.password || '';
+            }
+
+            // Nạp cấu hình Facebook (Trang cá nhân vs Fanpage)
+            if (cfg.platforms && cfg.platforms.facebook) {
+                const fb = cfg.platforms.facebook;
+                initFbTargetUI(fb.target_type || 'personal', fb.page_name || '', fb.page_url || '');
+            } else {
+                initFbTargetUI('personal', '', '');
             }
         }
     } catch (e) {
@@ -441,6 +458,7 @@ async function runBatchQueueDownload() {
             progressStepDetail.innerText = data.message || `Đã tải về ${data.downloaded_count || 0} video mới vào kho hàng đợi.`;
             showToast(`🎉 ${data.message || 'Đã gom video thành công!'}`, 'success');
             await fetchQueueSummary();
+            await fetchQueueVideos();
         } else {
             progressTitle.innerText = '⚠️ Thông báo quét video:';
             progressStepDetail.innerText = data.error || data.message || 'Không tải được video.';
@@ -464,7 +482,8 @@ async function runBatchQueueDownload() {
 // --------------------------------------------------------------------------
 // 3. ĐĂNG 1 VIDEO NGAY BÂY GIỜ (RUN WORKFLOW)
 // --------------------------------------------------------------------------
-async function runWorkflowNow() {
+async function runWorkflowNow(forceRepost = false) {
+    const isForce = forceRepost === true;
     const btn = document.getElementById('btnPostNow');
     const progressBox = document.getElementById('workflowProgressBox');
     const progressTitle = document.getElementById('progressTitle');
@@ -477,18 +496,38 @@ async function runWorkflowNow() {
     progressBox.style.display = 'block';
     progressPercent.innerText = '15%';
     progressBarFill.style.width = '15%';
-    progressTitle.innerText = '⏳ Đang quét và tải video từ HatBuiNho...';
-    progressStepDetail.innerText = 'Ưu tiên video Chưa tải xuống; hết thì lấy video mới nhất...';
+    progressTitle.innerText = isForce ? '⏳ Đang ép tải lại video gần nhất...' : '⏳ Đang quét và tải video từ HatBuiNho...';
+    progressStepDetail.innerText = isForce
+        ? 'Chế độ ép đăng lại: Đang lấy video gần nhất trên HatBuiNho...'
+        : 'Ưu tiên video Chưa tải xuống trong kho / HatBuiNho (chống đăng trùng)...';
 
-    showToast('⚡ Bắt đầu tiến trình tải & đăng 1 video...', 'info');
+    showToast(isForce ? '⚡ Đang thực hiện ép đăng lại...' : '⚡ Bắt đầu tiến trình tải & đăng 1 video...', 'info');
 
     try {
         const res = await fetch('/api/action/run-workflow', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode: 'normal' })
+            body: JSON.stringify({ mode: 'normal', force_repost: isForce })
         });
         const data = await res.json();
+
+        if (data.need_confirmation) {
+            progressBox.style.display = 'none';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+
+            const confirmed = window.confirm(
+                "⚠️ THÔNG BÁO CHỐNG ĐĂNG TRÙNG:\n\n" +
+                "Tất cả video trên HatBuiNho đều đã được đăng lên các nền tảng.\n\n" +
+                "Bạn có chắc chắn muốn ép tải và đăng lại video gần nhất không?"
+            );
+            if (confirmed) {
+                return await runWorkflowNow(true);
+            } else {
+                showToast('Đã hủy thao tác đăng lại video cũ.', 'info');
+                return;
+            }
+        }
         
         if (data.success) {
             progressPercent.innerText = '100%';
@@ -497,6 +536,8 @@ async function runWorkflowNow() {
             progressStepDetail.innerText = data.message || 'Đã phân phối đăng video thành công lên các kênh.';
             showToast('🎉 Đăng video thành công!', 'success');
             await fetchHistory();
+            await fetchQueueSummary();
+            await fetchQueueVideos();
         } else {
             progressTitle.innerText = '⚠️ Thông báo từ hệ thống:';
             progressStepDetail.innerText = data.message || data.error || 'Có thông tin cần kiểm tra.';
@@ -643,6 +684,359 @@ async function saveHatBuiNhoConfig() {
     } catch (e) {
         showToast('❌ Lỗi khi lưu tài khoản.', 'error');
     }
+}
+
+// --------------------------------------------------------------------------
+// 4.1. QUẢN LÝ ĐĂNG FACEBOOK: TRANG CÁ NHÂN HOẶC FANPAGE
+// --------------------------------------------------------------------------
+function initFbTargetUI(targetType, pageName, pageUrl) {
+    const radioPersonal = document.getElementById('fbTargetPersonal');
+    const radioFanpage = document.getElementById('fbTargetFanpage');
+    const pickerBox = document.getElementById('fbPagePickerBox');
+    const sel = document.getElementById('fbPageSelect');
+    const note = document.getElementById('fbPageStatusNote');
+
+    const isFanpage = targetType === 'fanpage';
+    if (radioPersonal && radioFanpage) {
+        radioPersonal.checked = !isFanpage;
+        radioFanpage.checked = isFanpage;
+    }
+    if (pickerBox) {
+        pickerBox.style.display = isFanpage ? 'block' : 'none';
+    }
+
+    if (sel && isFanpage) {
+        if (pageUrl) {
+            let found = false;
+            for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === pageUrl) {
+                    sel.selectedIndex = i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                const opt = document.createElement('option');
+                opt.value = pageUrl;
+                opt.innerText = `${pageName || 'Fanpage đã lưu'} (${pageUrl})`;
+                opt.dataset.name = pageName || 'Fanpage';
+                sel.appendChild(opt);
+                sel.value = pageUrl;
+            }
+            if (note) note.innerHTML = `✅ Đang chọn: <b>${pageName || pageUrl}</b>`;
+        } else {
+            sel.value = '';
+            if (note) note.innerHTML = '<span style="color: #f59e0b;">⚠️ Chưa chọn Fanpage nào. Bấm Quét Trang và chọn!</span>';
+        }
+    }
+}
+
+async function onFbTargetTypeChange(targetType) {
+    const pickerBox = document.getElementById('fbPagePickerBox');
+    const sel = document.getElementById('fbPageSelect');
+    const note = document.getElementById('fbPageStatusNote');
+
+    if (targetType === 'personal') {
+        if (pickerBox) pickerBox.style.display = 'none';
+        try {
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    platforms: {
+                        facebook: {
+                            enabled: true,
+                            target_type: 'personal'
+                        }
+                    }
+                })
+            });
+            showToast('💾 Đã chuyển sang chế độ đăng Facebook Trang cá nhân!', 'success');
+        } catch (e) {
+            console.error('Lỗi lưu cấu hình:', e);
+        }
+    } else {
+        if (pickerBox) pickerBox.style.display = 'block';
+        try {
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    platforms: {
+                        facebook: {
+                            enabled: true,
+                            target_type: 'fanpage'
+                        }
+                    }
+                })
+            });
+            if (!sel || !sel.value) {
+                if (note) note.innerHTML = '<span style="color: #f59e0b;">⚠️ Chưa chọn Fanpage. Bấm "Quét Trang" để chọn trang của bạn!</span>';
+                showToast('👉 Đã chuyển sang chế độ Fanpage. Vui lòng bấm Quét Trang và chọn Fanpage!', 'info');
+            } else {
+                showToast('💾 Đã chuyển sang chế độ đăng Facebook Fanpage!', 'success');
+            }
+        } catch (e) {
+            console.error('Lỗi lưu cấu hình:', e);
+        }
+    }
+}
+
+async function scanFacebookPages() {
+    const btn = document.getElementById('btnScanFbPages');
+    const sel = document.getElementById('fbPageSelect');
+    const note = document.getElementById('fbPageStatusNote');
+    if (!btn || !sel) return;
+
+    btn.disabled = true;
+    const oldBtnText = btn.innerText;
+    btn.innerText = '⏳ Đang quét...';
+    if (note) note.innerHTML = '<span style="color: #f59e0b;">⏳ Đang mở trình duyệt quét danh sách Fanpage bạn quản lý...</span>';
+    showToast('⏳ Đang quét danh sách Fanpage từ Facebook...', 'info');
+
+    try {
+        const res = await fetch('/api/facebook/pages');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.pages) && data.pages.length > 0) {
+            const currentVal = sel.value;
+            sel.innerHTML = '<option value="">-- Chọn Fanpage nhận video --</option>';
+
+            let selectedIndex = 0;
+            data.pages.forEach((p, idx) => {
+                const opt = document.createElement('option');
+                opt.value = p.url;
+                opt.innerText = `${p.name} (${p.url})`;
+                opt.dataset.name = p.name;
+                sel.appendChild(opt);
+
+                if (currentVal && p.url === currentVal) {
+                    selectedIndex = idx + 1;
+                }
+            });
+
+            if (selectedIndex > 0) {
+                sel.selectedIndex = selectedIndex;
+                const selectedOption = sel.options[sel.selectedIndex];
+                if (note) note.innerHTML = `✅ Đang chọn: <b>${selectedOption.dataset.name || ''}</b>`;
+            } else {
+                sel.selectedIndex = 0;
+                if (note) note.innerHTML = '<span style="color: #38bdf8;">👉 Vui lòng chọn 1 Fanpage từ danh sách trên</span>';
+            }
+
+            showToast(`✅ Đã tìm thấy ${data.pages.length} Fanpage Facebook! Hãy chọn trang của bạn.`, 'success');
+        } else {
+            const errMsg = data.error || 'Không tìm thấy Fanpage nào hoặc chưa đăng nhập.';
+            if (note) note.innerHTML = `<span style="color: #ef4444;">⚠️ ${errMsg}</span>`;
+            showToast(`⚠️ ${errMsg}`, 'warn');
+        }
+    } catch (e) {
+        if (note) note.innerHTML = `<span style="color: #ef4444;">❌ Lỗi kết nối: ${e.message}</span>`;
+        showToast('❌ Lỗi khi quét danh sách Fanpage.', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = oldBtnText;
+    }
+}
+
+async function onFbPageChange(showToastMsg = true) {
+    const sel = document.getElementById('fbPageSelect');
+    const note = document.getElementById('fbPageStatusNote');
+    if (!sel || !sel.value) {
+        if (note) note.innerHTML = '<span style="color: #f59e0b;">⚠️ Chưa chọn Fanpage nào.</span>';
+        return;
+    }
+
+    const selectedOption = sel.options[sel.selectedIndex];
+    const pageUrl = sel.value;
+    const pageName = selectedOption.dataset.name || selectedOption.text.split(' (http')[0].trim();
+
+    if (note) {
+        note.innerHTML = `✅ Đang chọn: <b>${pageName}</b>`;
+    }
+
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                platforms: {
+                    facebook: {
+                        enabled: true,
+                        target_type: 'fanpage',
+                        page_name: pageName,
+                        page_url: pageUrl
+                    }
+                }
+            })
+        });
+        const data = await res.json();
+        if (data.success && showToastMsg) {
+            showToast(`💾 Đã lưu Fanpage mục tiêu: ${pageName}`, 'success');
+        }
+    } catch (e) {
+        console.error('Lỗi khi lưu cấu hình Fanpage:', e);
+        if (showToastMsg) showToast('❌ Không thể lưu cấu hình Fanpage.', 'error');
+    }
+}
+async function fetchQueueVideos() {
+    try {
+        const res = await fetch('/api/queue/videos');
+        const data = await res.json();
+        const container = document.getElementById('queueContainer');
+        const badgeCount = document.getElementById('badgeQueueCount');
+        if (!container) return;
+
+        const videos = (data && data.videos) ? data.videos : [];
+        if (badgeCount) {
+            badgeCount.innerText = `${videos.length} video`;
+            if (videos.length > 0) {
+                badgeCount.classList.add('has-items');
+            } else {
+                badgeCount.classList.remove('has-items');
+            }
+        }
+
+        if (videos.length === 0) {
+            container.innerHTML = `
+                <div class="queue-empty-box">
+                    <div class="queue-empty-icon">📭</div>
+                    <div class="queue-empty-title">Kho Đang Trống (0 Video Chờ Đăng)</div>
+                    <div class="queue-empty-sub">
+                        Hiện chưa có video nào được tải về máy để chờ đăng.<br>
+                        Bấm nút <b>"ĐĂNG HÀNG LOẠT THEO LỊCH"</b> ở trên để hệ thống tự động quét & gom các video mới từ HatBuiNho vào kho này!
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        const cardsHtml = videos.map((v, index) => {
+            const rawTitle = v.suggested_title || v.title || `Video #${v.id || (index + 1)}`;
+            const isNext = index === 0;
+            const orderLabel = isNext ? '⭐ #1 Đăng Tiếp Theo' : `#${index + 1} Hàng Đợi`;
+            const sizeText = v.file_size_mb ? `${v.file_size_mb} MB` : '';
+            const dateText = v.downloaded_at ? v.downloaded_at.replace('T', ' ').split('.')[0] : '';
+            const hashtagsText = v.hashtags || '';
+
+            return `
+                <div class="queue-card ${isNext ? 'next-up' : ''}">
+                    <div>
+                        <div class="queue-card-top">
+                            <span class="queue-order-badge">${orderLabel}</span>
+                            <span class="queue-meta-badge">📁 ${sizeText || 'MP4'}${dateText ? ' • ' + dateText : ''}</span>
+                        </div>
+                        <h3 class="queue-card-title">${escapeHtml(rawTitle)}</h3>
+                        ${hashtagsText ? `<div class="queue-card-hashtags">${escapeHtml(hashtagsText)}</div>` : ''}
+                    </div>
+                    <div class="queue-card-footer">
+                        <button class="btn-queue-action btn-queue-play" onclick="openVideoPlayer(${v.id})" title="Mở phát video này bằng trình phát mặc định của máy tính (VLC / Windows Media Player)">
+                            🎬 Xem Video
+                        </button>
+                        <button class="btn-queue-action btn-queue-post" onclick="postSpecificVideo(${v.id}, '${escapeJsQuote(rawTitle)}')" title="Đăng lẻ video này ngay bây giờ lên các mạng xã hội">
+                            ⚡ Đăng Ngay
+                        </button>
+                        <button class="btn-queue-action btn-queue-delete" onclick="deleteQueuedVideo(${v.id}, '${escapeJsQuote(rawTitle)}')" title="Hủy bỏ và xóa tệp video này khỏi kho chờ đăng">
+                            🗑️ Bỏ Video
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = `<div class="queue-grid">${cardsHtml}</div>`;
+    } catch (e) {
+        console.error('Lỗi nạp danh sách video hàng đợi:', e);
+    }
+}
+
+async function openVideoPlayer(videoId) {
+    try {
+        showToast('🎬 Đang mở tệp video trên máy tính...', 'info');
+        const res = await fetch(`/api/videos/${videoId}/open-player`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            showToast('✅ Đã mở video trên Windows!', 'success');
+        } else {
+            showToast('❌ ' + (data.detail || data.message || 'Không thể mở video.'), 'error');
+        }
+    } catch (e) {
+        showToast('❌ Lỗi kết nối khi mở video.', 'error');
+    }
+}
+
+async function deleteQueuedVideo(videoId, title) {
+    const confirmed = window.confirm(
+        `🗑️ XÁC NHẬN XÓA VIDEO KHỎI HÀNG ĐỢI:\n\n` +
+        `"${title}"\n\n` +
+        `Bạn có chắc chắn muốn hủy và xóa tệp video này khỏi kho chờ đăng không?`
+    );
+    if (!confirmed) return;
+
+    try {
+        const res = await fetch(`/api/videos/${videoId}/queue`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            showToast('🗑️ ' + (data.message || 'Đã xóa video khỏi hàng đợi.'), 'success');
+            await fetchQueueVideos();
+            await fetchQueueSummary();
+            await fetchHistory();
+        } else {
+            showToast('❌ ' + (data.detail || 'Không thể xóa video.'), 'error');
+        }
+    } catch (e) {
+        showToast('❌ Lỗi kết nối máy chủ khi xóa video.', 'error');
+    }
+}
+
+async function postSpecificVideo(videoId, title) {
+    const confirmed = window.confirm(
+        `⚡ XÁC NHẬN ĐĂNG NGAY VIDEO:\n\n` +
+        `"${title}"\n\n` +
+        `Hệ thống sẽ tải lên và đăng video này ngay lập tức lên các mạng xã hội đã kích hoạt. Bạn có muốn tiếp tục?`
+    );
+    if (!confirmed) return;
+
+    try {
+        showToast('⚡ Bắt đầu tiến trình đăng video...', 'info');
+        const res = await fetch('/api/action/post', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_id: videoId })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast('🎉 Đã bắt đầu phân phối đăng video!', 'success');
+            setTimeout(async () => {
+                await fetchQueueVideos();
+                await fetchQueueSummary();
+                await fetchHistory();
+            }, 3000);
+        } else {
+            showToast('⚠️ ' + (data.detail || data.message || 'Không thể bắt đầu đăng.'), 'warn');
+        }
+    } catch (e) {
+        showToast('❌ Lỗi kết nối khi gửi yêu cầu đăng.', 'error');
+    }
+}
+
+async function openDownloadsFolder() {
+    try {
+        showToast('📁 Đang mở thư mục downloads...', 'info');
+        const res = await fetch('/api/action/open-downloads-folder', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            showToast('✅ Đã mở thư mục downloads trong Windows!', 'success');
+        } else {
+            showToast('❌ Không thể mở thư mục downloads.', 'error');
+        }
+    } catch (e) {
+        showToast('❌ Lỗi kết nối máy chủ.', 'error');
+    }
+}
+
+function escapeJsQuote(str) {
+    if (!str) return '';
+    return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
 // --------------------------------------------------------------------------

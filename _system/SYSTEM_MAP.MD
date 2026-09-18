@@ -209,8 +209,15 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 
 ## 5. HỆ THỐNG KHO HÀNG ĐỢI FIFO & CHỐNG ĐĂNG TRÙNG
 
-- FIFO: `status = 'downloaded' ORDER BY id ASC LIMIT 1`.
-- 3 lớp: `hatbuinho_id UNIQUE` → `status = posted` → `post_history` theo nền tảng.
+- **FIFO:** `status = 'downloaded' ORDER BY id ASC LIMIT 1`.
+- **Cơ chế Chống Đăng Trùng 4 Lớp Thép:**
+  1. **Lớp 1 (Trước khi tải - HatBuiNho Crawler):** Trích xuất `summary_text`, tính `item_hash` (MD5 12 ký tự của kịch bản). Kiểm tra `db.is_video_already_processed(item_hash)`. Nếu video đã có trong kho (`downloaded`, `posted`, `cleaned`), bỏ qua ngay lập tức, không tốn thời gian mở modal hay tải xuống.
+  2. **Lớp 2 (Sau khi tải - Dung lượng byte `file_size`):** Đo kích thước tệp video tải về. Đối chiếu `db.get_video_by_file_size(file_size)`. Nếu phát hiện tệp có dung lượng byte trùng 100% với video đã có trong DB, xóa ngay tệp vừa tải và chặn đăng lại.
+  3. **Lớp 3 (Cơ sở dữ liệu SQLite):** Ràng buộc `hatbuinho_id TEXT UNIQUE`. Khi thực hiện `ON CONFLICT`, bảo vệ trạng thái: tuyệt đối không cho phép ghi đè video đã đăng (`posted`) hoặc đã dọn (`cleaned`) ngược trở lại thành `downloaded`.
+  4. **Lớp 4 (Phân phối theo từng kênh riêng lẻ):** Trước khi đăng lên từng nền tảng (`youtube`, `tiktok`, `facebook`, `instagram`), kiểm tra `post_history`. Nếu kênh đó đã từng đăng thành công video này trước đó, tự động bỏ qua (`skipped`) để tránh đăng trùng lặp trên cùng 1 kênh.
+- **Xử lý khi kho rỗng & hết video mới:**
+  - Chế độ tự động (Scheduler): Dừng lại an toàn, ghi log thông báo, tuyệt đối không tự ý tải lại video cũ.
+  - Nút thủ công "Đăng 1 video ngay": Khi hết video mới, hệ thống hiện hộp thoại cảnh báo xác nhận. Người dùng bấm "Đồng ý" thì mới thực hiện ép tải lại (`force_repost=True`).
 
 ---
 
@@ -231,17 +238,22 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 | `GET` | `/api/stats` | Số liệu tổng |
 | `GET` | `/api/videos` | Danh sách video kho |
 | `GET` | `/api/videos/{video_id}/history` | Lịch sử theo 1 video |
-| `GET`/`POST` | `/api/config` | Đọc/lưu `config.json` local |
+| `GET`/`POST` | `/api/config` | Đọc/lưu `config.json` local (hỗ trợ deep merge `platforms`) |
 | `GET` | `/api/accounts/status` | Cookie/session các kênh |
+| `GET` | `/api/facebook/pages` | Quét danh sách các Fanpage do tài khoản Facebook quản trị |
 | `GET` | `/api/history` | Lịch sử đăng |
-| `GET` | `/api/queue/summary` | Kho hàng đợi |
+| `GET` | `/api/queue/summary` | Kho hàng đợi (số lượng & ngày dự kiến) |
+| `GET` | `/api/queue/videos` | Danh sách chi tiết các video đang chờ trong kho |
+| `POST` | `/api/videos/{video_id}/open-player` | Mở tệp video bằng trình phát mặc định của Windows (VLC/Media Player) |
+| `DELETE` | `/api/videos/{video_id}/queue` | Hủy bỏ & xóa tệp video khỏi kho hàng đợi |
+| `POST` | `/api/action/open-downloads-folder` | Mở thư mục downloads trong File Explorer |
 | `GET` | `/api/logs` | Nhật ký |
 | `GET`/`POST` | `/api/system/autostart` | Trạng thái / bật tắt khởi động Windows |
 | `POST` | `/api/schedule/timeslots` | Mốc giờ + reload scheduler |
 | `POST` | `/api/action/toggle-scheduler` | Bật/tắt auto |
 | `POST` | `/api/action/scan` | Quét HatBuiNho |
 | `POST` | `/api/action/post` | Đăng video đã chọn |
-| `POST` | `/api/action/run-workflow` | Đăng 1 video (ưu tiên kho / chưa tải) |
+| `POST` | `/api/action/run-workflow` | Đăng 1 video (ưu tiên kho / chưa tải; popup xác nhận khi hết video mới) |
 | `POST` | `/api/action/batch-download-queue` | Tải hàng loạt vào kho |
 | `POST` | `/api/action/cleanup` / `cleanup-old-videos` | Dọn mp4 cũ |
 | `POST` | `/api/action/send-test-email` | Email thử |
@@ -254,7 +266,12 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 
 ## 8. GIAO DIỆN DASHBOARD
 
-Một trang: 3 nút (Bật/Tắt tự động, Hàng loạt, Đăng 1 video ngay), mốc giờ, accordion đăng nhập 5 kênh (HatBuiNho + 4 MXH), lịch sử, nhật ký WebSocket.
+Một trang cuộn duy nhất:
+1. **Hero Card**: 3 nút chính (Bật/Tắt tự động, Đăng hàng loạt theo lịch, Đăng 1 video ngay), 2 nút cấu hình trình duyệt (Tắt tiếng, Hiển thị quá trình đăng), và Khung hẹn giờ đăng video.
+2. **Accordion Đăng Nhập**: 5 kênh (HatBuiNho + 4 MXH YouTube, TikTok, Facebook, Instagram).
+3. **Kho Video Chờ Đăng (Hàng Đợi)**: Danh sách thẻ trực quan các video đã tải về máy, gồm thứ tự FIFO (#1 tiếp theo, #2...), tiêu đề, hashtag, dung lượng MB, nút **Xem Video** (mở Windows Player), nút **Đăng Ngay** và nút **Bỏ Video**.
+4. **Bảng Danh Sách Video Đã Đăng**: Lịch sử đăng bài kèm liên kết trực tiếp tới từng nền tảng.
+5. **Accordion Cài Đặt Nâng Cao**: Khởi động cùng Windows, dọn dẹp video, email báo cáo & nhật ký WebSocket realtime.
 
 ---
 
@@ -269,7 +286,11 @@ Một trang: 3 nút (Bật/Tắt tự động, Hàng loạt, Đăng 1 video ngay
 ### Quy Tắc 3: Song ngữ Anh - Việt
 
 ### Quy Tắc 4: Hẹn native công khai 10:00 sáng mai (trừ Instagram)
-- **YouTube / TikTok / Facebook:** Schedule / Lên lịch ngày mai 10:00, công khai. Facebook: `#prodash-create-button` → Reel → 2 Next → Publish now → Date/Time → helper text đóng lịch → Schedule for later → Schedule footer (không Post). Copy link `aria-label="Actions for this post"`. TikTok: `tiktokstudio/content` → Tải lên → `#panel-video input[type=file]` → radio `postSchedule=schedule` → timepicker → `post_video_button` Lên lịch; copy link tab Bài đăng.
+- **YouTube / TikTok / Facebook:** Schedule / Lên lịch ngày mai 10:00, công khai.
+  - **Facebook (Trang cá nhân & Fanpage):** Hỗ trợ linh hoạt cả 2 chế độ (chọn trên Web Dashboard):
+    - `target_type = "personal"` (mặc định): Tự động chuyển về Trang cá nhân nếu phiên duyệt đang ở Fanpage (`_ensure_switched_to_personal`), sau đó lên lịch Reels trên Professional Dashboard cá nhân.
+    - `target_type = "fanpage"`: Người dùng bấm "Quét Trang" (`GET /api/facebook/pages`) và chọn 1 Fanpage cụ thể trong dropdown. Trước khi đăng, hệ thống tự động chuyển profile sang Fanpage đã chọn (`_ensure_switched_to_fanpage`). Nếu ở chế độ Fanpage nhưng chưa chọn trang mục tiêu (`page_url` rỗng), hệ thống tự động bỏ qua đăng Facebook an toàn (`skipped`), các kênh khác vẫn đăng bình thường.
+  - **TikTok:** `tiktokstudio/content` → Tải lên → `#panel-video input[type=file]` → radio `postSchedule=schedule` → timepicker → `post_video_button` Lên lịch; copy link tab Bài đăng.
 - **Instagram:** Bài viết / Post (không Story/Reel). Không `[role=switch]`, không Cài đặt nâng cao. Share / Chia sẻ (đúng chữ, không sheet Chia sẻ bài viết). Xong / Done → mở ô lưới đầu → `page.url` (`/p/` hoặc `/reel/`). Chạy thật: `instagram.min_gap_hours=3`.
 - `schedule_publish`: `enabled=true`, `default_time=10:00`, `target_date=tomorrow`.
 
@@ -277,9 +298,12 @@ Một trang: 3 nút (Bật/Tắt tự động, Hàng loạt, Đăng 1 video ngay
 
 ### Quy Tắc 6: Auto mode `exclude_today=True`. Nút thủ công cho phép video hôm nay.
 
-### Quy Tắc 7: HatBuiNho cookie-first
+### Quy Tắc 7: HatBuiNho cookie-first & Cơ Chế Tải Đa Phiên Bản / Đơn Bản
 - Có `#btn_view_history` thì không điền form. Thiếu username/password trên Dashboard thì không spam login. Đóng Đã đọc → Video → tab Đã xong.
-- **Phiên bản:** luôn bấm `.history-variant-tab` số cao nhất (Phiên bản 2/3/4/5 nếu có), rồi Tải xuống trong panel đang hiện, rồi `#btn_confirm_download_2`. Lỗi → bỏ video đó, sang video Chưa tải xuống tiếp theo (không lui về bản 1).
+- **Phiên bản & Tải xuống:**
+  - **Video đơn bản (1 bản duy nhất / không có tab phụ):** Bấm trực tiếp nút "Tải xuống" của thẻ video để mở `#download_reminder_modal`.
+  - **Video đa phiên bản (có từ 2 tab `.history-variant-tab` trở lên):** Tự động phân tích timestamp tạo video từ link media (`YYYYMMDD_HHMMSS`), ưu tiên chọn phiên bản mới nhất và kiểm tra HTTP 200 còn sống trên CDN. Nếu bản mới nhất bị lỗi 404 (do file cũ hết hạn), tự động fallback sang phiên bản khác còn sống. Chuyển tab sang phiên bản đã chọn và bấm nút "Tải xuống" trong panel tương ứng.
+  - **Tải tệp & Cơ chế dự phòng kép:** Ưu tiên bấm `#btn_confirm_download_2` ('Tải xuống 2 - có tên') qua Playwright download. Nếu trình duyệt báo hủy (`canceled`) hoặc lỗi, hệ thống tự động kích hoạt **Cơ chế tải trực tiếp dự phòng** qua stream URL media về thư mục `downloads/` và gọi API ghi nhận `postTrackDownload`. Nếu toàn bộ link của video đều 404, ghi nhật ký cảnh báo và tự động chuyển sang video tiếp theo.
 
 ### Quy Tắc 8: AI Vilao
 - **Khi tải:** `suggest_popular_hashtags` — 3–5 hashtag phổ biến, gộp với kho đạo lý (`#luatnhanqua`, `#loiphatday`…). Thiếu `VILAO_API_KEY` → chỉ kho đạo lý, không chặn tải. Cấm `#hatbuinho` / chữ ký thương hiệu (`custom_caption.append_text` mặc định trống).
@@ -310,6 +334,7 @@ Một trang: 3 nút (Bật/Tắt tự động, Hàng loạt, Đăng 1 video ngay
 - `browser.headless=true` (mặc định): ẩn cửa sổ khi tải/đăng. Nút Dashboard **HIỂN THỊ QUÁ TRÌNH ĐĂNG** bật cửa sổ. **Mở Trình Duyệt Đăng Nhập** luôn hiện.
 - `browser.mute_audio=true` (mặc định): Chromium Playwright `--mute-audio`. Nút Dashboard đổi được; Chrome của user không bị mute.
 - `schedule_publish.default_time=10:00`, `target_date=tomorrow`.
+- `platforms.facebook`: `target_type: "personal"` (mặc định), `page_name: ""`, `page_url: ""`.
 - `custom_caption.append_text` trống (không `#hatbuinho`).
 - `platforms.instagram.min_gap_hours=3`.
 

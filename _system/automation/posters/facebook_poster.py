@@ -1,9 +1,10 @@
 import os
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from playwright.async_api import Page
 from automation.posters.base_poster import BasePoster
 from core.logger import logger
+from core.config_manager import config_manager
 from core.schedule_helper import get_native_schedule
 from automation.ai_fallback import fail_with_ai, SCHEDULE_GOAL
 
@@ -82,6 +83,189 @@ class FacebookPoster(BasePoster):
             ).first.is_visible(timeout=1000):
                 return True
         return False
+
+    async def _ensure_switched_to_fanpage(self, page: Page, page_url: str) -> bool:
+        """Kiểm tra và chuyển quyền quản trị sang Fanpage mục tiêu nếu chưa chuyển."""
+        if not page_url:
+            return False
+        try:
+            logger.info(f"Kiểm tra chuyển quyền sang Fanpage: {page_url}", "FACEBOOK")
+            await page.goto(page_url, wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(4)
+            await self._dismiss_fb_popups(page)
+
+            if not await self._wait_login(page):
+                return False
+
+            # Check if switch button exists: Switch Now / Chuyển ngay / Switch
+            switch_btn = page.locator(
+                'div[role="button"]:has-text("Switch Now"), '
+                'div[role="button"]:has-text("Chuyển ngay"), '
+                'div[aria-label="Switch Now"], '
+                'div[aria-label="Chuyển ngay"]'
+            ).first
+
+            if await switch_btn.is_visible(timeout=4000):
+                logger.info("Tìm thấy nút Chuyển ngay (Switch Now), đang bấm chuyển...", "FACEBOOK")
+                await switch_btn.click(force=True)
+                await asyncio.sleep(6)
+                await self._dismiss_fb_popups(page)
+                logger.success(f"Đã chuyển quyền sang Fanpage: {page_url}", "FACEBOOK")
+                return True
+
+            btn2 = page.locator(
+                'div[role="button"]:has-text("Switch"), '
+                'div[aria-label="Switch"]'
+            ).first
+            if await btn2.is_visible(timeout=3000):
+                logger.info("Tìm thấy nút Switch, đang bấm chuyển...", "FACEBOOK")
+                await btn2.click(force=True)
+                await asyncio.sleep(6)
+                await self._dismiss_fb_popups(page)
+                logger.success(f"Đã chuyển quyền sang Fanpage: {page_url}", "FACEBOOK")
+                return True
+
+            # Check if already switched (e.g. Manage / Quản lý button visible)
+            manage_btn = page.locator(
+                'div[role="button"]:has-text("Manage"), '
+                'div[role="button"]:has-text("Quản lý"), '
+                'div[aria-label="Manage"], '
+                'div[aria-label="Quản lý"]'
+            ).first
+            if await manage_btn.is_visible(timeout=3000):
+                logger.info(f"Đang ở đúng tài khoản Fanpage ({page_url}) (thấy nút Quản lý).", "FACEBOOK")
+                return True
+
+            logger.info(f"Không cần chuyển hoặc đã ở trang Fanpage: {page_url}", "FACEBOOK")
+            return True
+        except Exception as e:
+            logger.warning(f"Lỗi khi kiểm tra/chuyển Fanpage ({page_url}): {e}", "FACEBOOK")
+            return False
+
+    async def _ensure_switched_to_personal(self, page: Page) -> bool:
+        """Kiểm tra và chuyển quyền trở lại Trang cá nhân nếu trình duyệt đang ở profile Fanpage."""
+        try:
+            logger.info("Kiểm tra profile Facebook hiện tại (cần ở Trang cá nhân)...", "FACEBOOK")
+            await page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(4)
+            await self._dismiss_fb_popups(page)
+
+            if not await self._wait_login(page):
+                return False
+
+            profile_btn = page.locator(
+                'div[aria-label="Your profile"], '
+                'div[aria-label="Trang cá nhân của bạn"], '
+                'div[role="button"][aria-label*="profile" i]'
+            ).first
+
+            if not await profile_btn.is_visible(timeout=5000):
+                logger.info("Không tìm thấy nút profile avatar, tiếp tục với phiên hiện tại.", "FACEBOOK")
+                return True
+
+            await profile_btn.click()
+            await asyncio.sleep(2)
+
+            switch_to_personal_btn = page.locator(
+                'div[role="dialog"] div[role="button"][aria-label*="Switch to "], '
+                'div[role="dialog"] div[role="button"][aria-label*="Chuyển sang "], '
+                'div[role="menu"] div[role="button"][aria-label*="Switch to "], '
+                'div[role="menu"] div[role="button"][aria-label*="Chuyển sang "]'
+            ).first
+
+            if await switch_to_personal_btn.is_visible(timeout=3000):
+                target_label = await switch_to_personal_btn.get_attribute("aria-label") or "Trang cá nhân"
+                logger.info(f"Đang ở profile Fanpage, bấm chuyển về {target_label}...", "FACEBOOK")
+                await switch_to_personal_btn.click(force=True)
+                await asyncio.sleep(6)
+                await self._dismiss_fb_popups(page)
+                logger.success(f"Đã chuyển về {target_label}.", "FACEBOOK")
+                return True
+
+            logger.info("Đã ở đúng tài khoản Trang cá nhân Facebook.", "FACEBOOK")
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.5)
+            return True
+        except Exception as e:
+            logger.warning(f"Lỗi khi kiểm tra/chuyển về Trang cá nhân: {e}", "FACEBOOK")
+            return False
+
+    async def scan_managed_pages(self, page: Optional[Page] = None) -> List[Dict[str, str]]:
+        """Quét danh sách các Fanpage do tài khoản quản lý."""
+        should_close_page = False
+        if page is None:
+            from automation.browser_engine import browser_engine
+            ctx = await browser_engine.get_context()
+            page = await ctx.new_page()
+            should_close_page = True
+
+        try:
+            logger.info("Đang quét danh sách Fanpage đang quản lý từ Facebook...", "FACEBOOK")
+            await page.goto("https://www.facebook.com/pages/?category=your_pages", wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(4)
+            await self._dismiss_fb_popups(page)
+
+            if not await self._wait_login(page):
+                logger.warning("Chưa đăng nhập Facebook, không thể quét danh sách Fanpage.", "FACEBOOK")
+                return []
+
+            pages_data = await page.evaluate('''() => {
+                const results = [];
+                const seen = new Set();
+                const main = document.querySelector('div[role="main"]') || document.body;
+                const links = Array.from(main.querySelectorAll('a[href]'));
+                const excluded = [
+                    'pages', 'watch', 'gaming', 'messages', 'friends', 'groups',
+                    'marketplace', 'bookmarks', 'events', 'saved', 'memories',
+                    'ads', 'business', 'notifications', 'me', 'help', 'settings',
+                    'privacy', 'login', 'policies', 'dialog', 'recover'
+                ];
+                for (const a of links) {
+                    const href = a.href;
+                    const text = (a.innerText || '').trim();
+                    if (!text) continue;
+                    try {
+                        const u = new URL(href);
+                        if (u.pathname.includes('profile.php')) {
+                            const id = u.searchParams.get('id');
+                            if (id) {
+                                const cleanUrl = `https://www.facebook.com/profile.php?id=${id}`;
+                                const name = text.split('\\n')[0].trim();
+                                if (!seen.has(cleanUrl) && name.length >= 2) {
+                                    seen.add(cleanUrl);
+                                    results.push({ name: name, url: cleanUrl });
+                                }
+                            }
+                            continue;
+                        }
+                        const segs = u.pathname.split('/').filter(Boolean);
+                        if (segs.length === 1 && !excluded.includes(segs[0].toLowerCase())) {
+                            const cleanUrl = `https://www.facebook.com/${segs[0]}/`;
+                            const name = text.split('\\n')[0].trim();
+                            const nameLower = name.toLowerCase();
+                            if (['create post', 'tạo bài viết', 'switch', 'chuyển', 'see all', 'xem tất cả', 'xem thêm', 'see more'].includes(nameLower)) {
+                                continue;
+                            }
+                            if (!seen.has(cleanUrl) && name.length >= 2) {
+                                seen.add(cleanUrl);
+                                results.push({ name: name, url: cleanUrl });
+                            }
+                        }
+                    } catch(e) {}
+                }
+                return results;
+            }''')
+            logger.success(f"Quét được {len(pages_data)} Fanpage Facebook.", "FACEBOOK")
+            return pages_data
+        except Exception as e:
+            logger.error(f"Lỗi khi quét danh sách Fanpage Facebook: {e}", "FACEBOOK")
+            return []
+        finally:
+            if should_close_page and page:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
 
     async def _click_create_reel(self, page: Page) -> bool:
         create = page.locator("#prodash-create-button").first
@@ -660,7 +844,29 @@ class FacebookPoster(BasePoster):
         caption = self.format_caption(video_data)
         native = get_native_schedule(schedule_time or "")
 
+        fb_cfg = config_manager.get_platform_config("facebook")
+        target_type = fb_cfg.get("target_type", "personal")
+        page_url = fb_cfg.get("page_url", "")
+        page_name = fb_cfg.get("page_name", "")
+
         try:
+            if target_type == "fanpage":
+                if not page_url:
+                    logger.warning(
+                        "⚠️ Facebook đang ở chế độ Fanpage nhưng chưa chọn trang mục tiêu cụ thể. "
+                        "Bỏ qua đăng Facebook lần này (vui lòng vào Dashboard chọn Fanpage)!",
+                        "FACEBOOK",
+                    )
+                    return {"success": True, "skipped": True, "error": "Chưa chọn Fanpage mục tiêu trên Dashboard"}
+
+                logger.info(f"Chuẩn bị đăng lên Facebook Fanpage: {page_name} ({page_url})", "FACEBOOK")
+                switched = await self._ensure_switched_to_fanpage(page, page_url)
+                if not switched:
+                    logger.warning(f"Không thể xác nhận chuyển sang Fanpage {page_url}, tiếp tục mở Professional Dashboard...", "FACEBOOK")
+            else:
+                logger.info("Chuẩn bị đăng lên Facebook Trang cá nhân...", "FACEBOOK")
+                await self._ensure_switched_to_personal(page)
+
             logger.info(f"Mở Facebook Professional Dashboard (Scheduled): {FB_LIBRARY_SCHEDULED}", "FACEBOOK")
             await page.goto(FB_LIBRARY_SCHEDULED, wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(5)

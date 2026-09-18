@@ -26,6 +26,7 @@ class WorkflowManager:
         oldest_first: bool = True,
         exclude_today: bool = False,
         fallback_latest: bool = False,
+        force_repost: bool = False,
     ) -> List[Dict[str, Any]]:
         if self._is_busy:
             logger.warning("Hệ thống đang bận thực hiện tác vụ khác. Vui lòng đợi...", "WORKFLOW")
@@ -38,6 +39,8 @@ class WorkflowManager:
                 mode_name = "TEST ÉP TẢI VIDEO MỚI NHẤT" if force_latest else f"QUÉT TẢI VIDEO 'CHƯA TẢI XUỐNG' ({'Cũ nhất' if oldest_first else 'Mới nhất'}){safety_str}"
                 if fallback_latest and not force_latest:
                     mode_name += " (hết Chưa tải thì lấy video mới nhất)"
+                if force_repost:
+                    mode_name += " [XÁC NHẬN ÉP ĐĂNG LẠI]"
                 logger.info(f"Bắt đầu tác vụ: {mode_name} từ hatbuinho.com...", "WORKFLOW")
                 results = await hatbuinho_crawler.scan_and_download(
                     max_items=max_items,
@@ -45,6 +48,7 @@ class WorkflowManager:
                     oldest_first=oldest_first,
                     exclude_today=exclude_today,
                     fallback_latest=fallback_latest,
+                    force_repost=force_repost,
                 )
                 return results
             finally:
@@ -112,9 +116,26 @@ class WorkflowManager:
                     "WORKFLOW",
                 )
 
+                already_success_platforms = db.get_successful_platforms_for_video(video_id)
+
                 results = {}
                 for plat in target_platforms:
                     logger.info(f"--- Đang chuẩn bị đăng lên {plat.upper()} ---", "WORKFLOW")
+
+                    # CHỐNG ĐĂNG TRÙNG THEO TỪNG KÊNH: Bỏ qua kênh nếu video này đã từng đăng thành công trước đó
+                    if plat in already_success_platforms:
+                        msg = f"Video #{video_id} đã đăng thành công lên {plat.upper()} trước đó. Tự động bỏ qua kênh này để chống đăng trùng."
+                        logger.info(f"[SKIP ĐĂNG TRÙNG] {msg}", plat.upper())
+                        db.record_post(
+                            video_id=video_id,
+                            platform=plat,
+                            status="skipped",
+                            post_url="",
+                            error_message=msg,
+                        )
+                        results[plat] = {"success": True, "skipped": True, "url": "", "error": msg}
+                        await asyncio.sleep(1)
+                        continue
 
                     if plat == "instagram" and enforce_ig_gap:
                         gap_hours = get_instagram_min_gap_hours()

@@ -2,6 +2,7 @@ import os
 import re
 import asyncio
 import hashlib
+import urllib.request
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -12,6 +13,14 @@ from core.database import db
 from automation.browser_engine import browser_engine, DOWNLOADS_DIR
 from automation.hashtag_manager import hashtag_mgr
 from automation.ai_fallback import diagnose_and_recover, DOWNLOAD_GOAL
+
+class VersionSelectionResult(dict):
+    """Kết quả chọn phiên bản, kế thừa dict để truy xuất thuộc tính và hỗ trợ int(result)."""
+    def __int__(self):
+        return int(self.get("version_n", 1))
+
+    def __index__(self):
+        return int(self.get("version_n", 1))
 
 class HatBuiNhoCrawler:
     def __init__(self):
@@ -92,72 +101,270 @@ class HatBuiNhoCrawler:
             await item_locator.evaluate("el => { el.open = true; }")
         await asyncio.sleep(0.6)
 
-    async def _select_highest_version_and_open_download(self, item_locator) -> int:
-        """Click thật nút Phiên bản N cao nhất rồi bấm Tải xuống đúng panel đang hiện.
-
-        Trả về số phiên bản đã chọn (1 nếu không có tab). Lỗi thì raise để vòng quét bỏ video này.
-        """
-        await self._ensure_history_item_open(item_locator)
-
-        tabs = item_locator.locator("button.history-variant-tab")
+    async def _click_download_button(self, target_locator, fallback_target=None) -> bool:
+        """Bấm nút Tải xuống với cơ chế định vị linh hoạt và fallback JavaScript."""
         try:
-            await tabs.first.wait_for(state="visible", timeout=2500)
+            dl_btn = target_locator.locator("button").filter(has_text="Tải xuống").first
+            if await dl_btn.is_visible(timeout=2500):
+                await dl_btn.scroll_into_view_if_needed()
+                await asyncio.sleep(0.2)
+                await dl_btn.click(timeout=5000)
+                return True
         except Exception:
             pass
 
-        tab_count = await tabs.count()
-        if tab_count == 0:
-            tabs = item_locator.locator("button[id^='hvt-']")
-            tab_count = await tabs.count()
-        version_n = 1
-        tab_labels = []
-        best_idx = -1
-        best_n = 0
-
-        for i in range(tab_count):
-            tab = tabs.nth(i)
-            raw = await tab.evaluate("el => (el.textContent || el.innerText || '').replace(/\\s+/g, ' ').trim()")
-            tab_labels.append(raw or f"tab#{i}")
-            match = re.search(r"(\d+)", raw or "")
-            n = int(match.group(1)) if match else (i + 1)
-            if n >= best_n:
-                best_n = n
-                best_idx = i
-
-        if tab_count == 0:
-            logger.info("Video này không có tab Phiên bản 2/3/4 — tải bản mặc định.", "HATBUINHO")
-        else:
-            logger.info(
-                f"Tìm thấy {tab_count} tab phiên bản: {', '.join(tab_labels)}. Sẽ bấm số cao nhất.",
-                "HATBUINHO",
-            )
-            version_n = best_n or 1
-            if best_idx >= 0 and (tab_count > 1 or version_n > 1):
-                target = tabs.nth(best_idx)
-                await target.scroll_into_view_if_needed()
-                await asyncio.sleep(0.45)
-                await target.click(timeout=8000)
-                logger.info(f"Đã click chuột vào '{tab_labels[best_idx]}' (Phiên bản {version_n}).", "HATBUINHO")
-                await asyncio.sleep(1.2)
-            else:
-                logger.info("Chỉ có Phiên bản 1 — không cần đổi tab.", "HATBUINHO")
-
-        visible_panel = item_locator.locator(".hist-ver-panel:not(.hidden)")
-        if await visible_panel.count() > 0:
-            dl = visible_panel.locator("button").filter(has_text="Tải xuống").first
-        else:
-            dl = item_locator.locator("button").filter(has_text="Tải xuống").first
-
         try:
-            await dl.wait_for(state="visible", timeout=8000)
-            await dl.scroll_into_view_if_needed()
-            await asyncio.sleep(0.35)
-            await dl.click(timeout=8000)
-        except Exception as click_ex:
-            raise RuntimeError(f"Không thấy nút Tải xuống của Phiên bản {version_n}: {click_ex}") from click_ex
+            clicked = await target_locator.evaluate("""el => {
+                const btns = Array.from(el.querySelectorAll('button'));
+                const dl = btns.find(b => {
+                    const t = (b.innerText || b.textContent || '').replace(/\\s+/g, ' ').trim();
+                    return t.includes('Tải xuống');
+                });
+                if (dl) {
+                    dl.scrollIntoView({ block: 'center' });
+                    dl.click();
+                    return true;
+                }
+                return false;
+            }""")
+            if clicked:
+                return True
+        except Exception:
+            pass
 
-        logger.info(f"Đã chọn Phiên bản {version_n} (cao nhất) rồi bấm Tải xuống.", "HATBUINHO")
-        return version_n
+        if fallback_target is not None:
+            return await self._click_download_button(fallback_target)
+
+        return False
+
+    def _check_url_alive(self, url: str, timeout: int = 5) -> bool:
+        """Kiểm tra nhanh xem URL media có phản hồi 200 OK (tệp còn tồn tại trên CDN) hay không."""
+        if not url:
+            return False
+        try:
+            clean_url = url.split("?")[0]
+            req = urllib.request.Request(clean_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
+    async def _direct_download_media(self, page: Page, media_url: str, target_file_path: str, order_id: Optional[str] = None) -> bool:
+        """Tải trực tiếp video từ media_url về target_file_path bằng stream khi modal download của trình duyệt bị hủy hoặc lỗi."""
+        try:
+            clean_url = media_url.split("?")[0]
+            logger.info(f"Tiến hành tải trực tiếp từ URL: {clean_url}...", "HATBUINHO")
+            
+            def _stream_dl():
+                req = urllib.request.Request(clean_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=90) as resp, open(target_file_path, "wb") as out_f:
+                    while True:
+                        chunk = resp.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+
+            await asyncio.to_thread(_stream_dl)
+
+            if os.path.exists(target_file_path) and os.path.getsize(target_file_path) > 0:
+                logger.success(f"Tải trực tiếp thành công: {os.path.basename(target_file_path)} ({os.path.getsize(target_file_path) // 1024} KB).", "HATBUINHO")
+                if order_id:
+                    try:
+                        await page.evaluate("""([oid, url]) => {
+                            if (typeof postTrackDownload === 'function') {
+                                postTrackDownload(oid, url);
+                            }
+                        }""", [order_id, media_url])
+                    except Exception:
+                        pass
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Lỗi tải trực tiếp dự phòng: {e}", "HATBUINHO")
+            return False
+
+    async def _select_highest_version_and_open_download(self, item_locator) -> Optional[VersionSelectionResult]:
+        """Phân tích các phiên bản (nếu có) hoặc video đơn bản duy nhất.
+        - Tự động chọn phiên bản có ngày tạo mới nhất (timestamp) và còn tồn tại trên máy chủ (HTTP 200).
+        - Nếu phiên bản mới nhất bị 404, tự động thử các phiên bản khác còn sống.
+        - Với video đơn bản (không có tab), bấm trực tiếp nút Tải xuống của thẻ video.
+        - Bấm nút Tải xuống tương ứng để mở modal #download_reminder_modal.
+        """
+        await self._ensure_history_item_open(item_locator)
+
+        # Trích xuất thông tin các tab và nút tải bằng JavaScript evaluate
+        extracted = await item_locator.evaluate("""el => {
+            const tabs = Array.from(el.querySelectorAll('button.history-variant-tab, button[id^="hvt-"]'));
+            const panels = Array.from(el.querySelectorAll('.hist-ver-panel'));
+
+            function parseMediaFromRoot(root) {
+                if (!root) return null;
+                const buttons = Array.from(root.querySelectorAll('button'));
+                for (const b of buttons) {
+                    const oc = b.getAttribute('onclick') || '';
+                    const m = oc.match(/https:\\/\\/media\\.hatbuinho\\.com\\/[^'"]+/);
+                    if (m) {
+                        const fnMatch = oc.match(/safeMobileDownload\\([^,]+,\\s*[^,]+,\\s*['"]([^'"]+)['"]\\)/);
+                        const orderMatch = oc.match(/safeMobileDownload\\([^,]+,\\s*['"]([^'"]+)['"]/);
+                        return {
+                            mediaUrl: m[0],
+                            orderId: orderMatch ? orderMatch[1] : '',
+                            suggestedFilename: fnMatch ? fnMatch[1] : '',
+                        };
+                    }
+                }
+                return null;
+            }
+
+            if (tabs.length > 1) {
+                const variants = [];
+                for (let i = 0; i < tabs.length; i++) {
+                    const tab = tabs[i];
+                    const tabText = (tab.textContent || tab.innerText || '').replace(/\\s+/g, ' ').trim();
+                    const isActive = tab.classList.contains('history-variant-tab--active');
+                    const panel = panels[i] || document.getElementById(tab.id.replace('hvt-', 'hvp-'));
+                    const media = parseMediaFromRoot(panel);
+                    variants.push({
+                        index: i,
+                        tabId: tab.id,
+                        tabText: tabText || ('Phiên bản ' + (i + 1)),
+                        isActive: isActive,
+                        panelId: panel ? panel.id : null,
+                        mediaUrl: media ? media.mediaUrl : '',
+                        orderId: media ? media.orderId : '',
+                        suggestedFilename: media ? media.suggestedFilename : ''
+                    });
+                }
+                return { isMulti: true, variants: variants };
+            } else {
+                const media = parseMediaFromRoot(el);
+                return {
+                    isMulti: false,
+                    variants: media ? [{
+                        index: 0,
+                        tabId: null,
+                        tabText: 'Bản gốc',
+                        isActive: true,
+                        panelId: null,
+                        mediaUrl: media.mediaUrl,
+                        orderId: media.orderId,
+                        suggestedFilename: media.suggestedFilename
+                    }] : []
+                };
+            }
+        }""")
+
+        is_multi = extracted.get("isMulti", False)
+        variants = extracted.get("variants", [])
+
+        if not variants:
+            logger.info("Không trích xuất được link video trong DOM, bấm nút Tải xuống mặc định...", "HATBUINHO")
+            clicked = await self._click_download_button(item_locator)
+            if not clicked:
+                raise RuntimeError("Không thấy hoặc không thể bấm nút Tải xuống của video này.")
+            return VersionSelectionResult(version_n=1, media_url="", order_id="", suggested_filename="")
+
+        # Trường hợp 1: Video đơn bản (chỉ có 1 bản duy nhất, không có tab)
+        if not is_multi or len(variants) <= 1:
+            single_var = variants[0]
+            media_url = single_var.get("mediaUrl") or ""
+            logger.info(f"Video đơn bản (không có tab phiên bản phụ). Link: {media_url[:65]}...", "HATBUINHO")
+            
+            if media_url:
+                is_alive = await asyncio.to_thread(self._check_url_alive, media_url, 4)
+                if not is_alive:
+                    logger.warning(f"File video của mục này đã bị máy chủ CDN xóa hoặc hết hạn (404): {media_url}", "HATBUINHO")
+                    return None
+
+            clicked = await self._click_download_button(item_locator)
+            if not clicked:
+                raise RuntimeError("Không bấm được nút Tải xuống của video đơn bản.")
+            return VersionSelectionResult(
+                version_n=1,
+                media_url=media_url,
+                order_id=single_var.get("orderId", ""),
+                suggested_filename=single_var.get("suggestedFilename", "")
+            )
+
+        # Trường hợp 2: Video có nhiều phiên bản (variant tabs)
+        def get_timestamp_score(v):
+            url = v.get("mediaUrl", "")
+            m = re.search(r'/(\d{8}_\d{6})_', url)
+            if m:
+                return m.group(1)
+            return "00000000_000000"
+
+        # Sắp xếp ưu tiên: timestamp mới nhất trước, nếu bằng nhau thì ưu tiên tab đang active
+        sorted_candidates = sorted(
+            variants,
+            key=lambda v: (get_timestamp_score(v), 1 if v.get("isActive") else 0),
+            reverse=True
+        )
+
+        variants_summary = ', '.join([f"{v.get('tabText')} ({get_timestamp_score(v)})" for v in sorted_candidates])
+        logger.info(
+            f"Phát hiện {len(variants)} phiên bản: {variants_summary}.",
+            "HATBUINHO"
+        )
+
+        chosen_candidate = None
+        for cand in sorted_candidates:
+            m_url = cand.get("mediaUrl")
+            if not m_url:
+                continue
+            is_alive = await asyncio.to_thread(self._check_url_alive, m_url, 4)
+            cand_label = cand.get('tabText', '')
+            if is_alive:
+                chosen_candidate = cand
+                logger.info(
+                    f"-> Đã chọn '{cand_label}' ({get_timestamp_score(cand)}) - Link hoạt động tốt (HTTP 200).",
+                    "HATBUINHO"
+                )
+                break
+            else:
+                logger.warning(
+                    f"-> Bỏ qua '{cand_label}' vì link máy chủ trả về lỗi hoặc hết hạn (404): {m_url[:65]}...",
+                    "HATBUINHO"
+                )
+
+        if not chosen_candidate:
+            logger.error("Tất cả phiên bản của video này đều bị lỗi 404 trên CDN máy chủ!", "HATBUINHO")
+            return None
+
+        # Chuyển tab sang phiên bản đã chọn nếu tab đó chưa active
+        chosen_label = chosen_candidate.get('tabText', '')
+        if not chosen_candidate.get("isActive"):
+            idx = chosen_candidate.get("index", 0)
+            tab_locator = item_locator.locator(f"button.history-variant-tab, button[id^='hvt-']").nth(idx)
+            try:
+                await tab_locator.scroll_into_view_if_needed()
+                await tab_locator.click(timeout=3000)
+            except Exception:
+                await tab_locator.evaluate("el => el.click()")
+            logger.info(f"Đã chuyển sang tab '{chosen_label}'.", "HATBUINHO")
+            await asyncio.sleep(0.6)
+
+        # Bấm nút Tải xuống trong panel của phiên bản đã chọn
+        panel_id = chosen_candidate.get("panelId")
+        if panel_id:
+            panel_locator = item_locator.locator(f"#{panel_id}")
+            clicked = await self._click_download_button(panel_locator, fallback_target=item_locator)
+        else:
+            visible_panel = item_locator.locator(".hist-ver-panel:not(.hidden)").first
+            clicked = await self._click_download_button(visible_panel, fallback_target=item_locator)
+
+        if not clicked:
+            raise RuntimeError(f"Không thể bấm nút Tải xuống của {chosen_candidate.get('tabText')}.")
+
+        match = re.search(r"(\d+)", chosen_candidate.get("tabText", ""))
+        v_num = int(match.group(1)) if match else (chosen_candidate.get("index", 0) + 1)
+
+        return VersionSelectionResult(
+            version_n=v_num,
+            media_url=chosen_candidate.get("mediaUrl", ""),
+            order_id=chosen_candidate.get("orderId", ""),
+            suggested_filename=chosen_candidate.get("suggestedFilename", "")
+        )
 
     async def login_if_needed(self, page: Page) -> bool:
         hat_config = config_mgr.get("hatbuinho", {})
@@ -198,16 +405,20 @@ class HatBuiNhoCrawler:
 
             submit_btn = page.locator('button:has-text("BẮT ĐẦU NGAY")').first
             await submit_btn.click()
-            await asyncio.sleep(3)
-            logger.success("Đã gửi thông tin đăng nhập.", "HATBUINHO")
+            await asyncio.sleep(2)
 
+            # Xử lý thông báo giới hạn 2 thiết bị nếu xuất hiện
+            kick_btn = page.locator('button:has-text("Đăng nhập và đăng xuất máy cũ")').first
             try:
-                limit_msg = page.locator('text=Tài khoản đang hoạt động nơi khác, text=giới hạn 2 thiết bị').first
-                if await limit_msg.is_visible(timeout=2000):
-                    logger.error("HatBuiNho báo giới hạn 2 thiết bị. Không spam login — cần session cookie hoặc Admin reset.", "HATBUINHO")
-                    return False
+                if await kick_btn.is_visible(timeout=3000):
+                    logger.info("Phát hiện cảnh báo 2 thiết bị: Bấm 'Đăng nhập và đăng xuất máy cũ'...", "HATBUINHO")
+                    await kick_btn.click()
+                    await asyncio.sleep(3)
             except Exception:
                 pass
+
+            logger.success("Đã gửi thông tin đăng nhập.", "HATBUINHO")
+            await asyncio.sleep(2)
 
         await self._dismiss_announcements(page)
         return True
@@ -302,6 +513,7 @@ class HatBuiNhoCrawler:
         oldest_first: bool = True,
         exclude_today: bool = False,
         fallback_latest: bool = False,
+        force_repost: bool = False,
     ) -> List[Dict[str, Any]]:
         """Quét danh sách video 'Đã xong' và tải về kèm hashtag đạo lý ngẫu nhiên"""
         downloaded_videos = []
@@ -330,7 +542,7 @@ class HatBuiNhoCrawler:
             for idx in range(total_items):
                 try:
                     item_locator = page.locator('details.history-order').nth(idx)
-                    if force_latest:
+                    if force_latest or force_repost:
                         pending_indexes.append(idx)
                     else:
                         badge = item_locator.locator('summary span:has-text("Chưa tải xuống")').first
@@ -341,15 +553,22 @@ class HatBuiNhoCrawler:
 
             logger.info(f"Phát hiện {len(pending_indexes)} video 'Chưa tải xuống'.", "HATBUINHO")
 
-            use_latest = bool(force_latest)
+            use_latest = bool(force_latest or force_repost)
             if not pending_indexes and fallback_latest and total_items > 0:
-                logger.info(
-                    "Đã hết video 'Chưa tải xuống' trên HatBuiNho. Chuyển sang tải video mới nhất.",
-                    "HATBUINHO",
-                )
-                pending_indexes = list(range(total_items))
-                use_latest = True
-                oldest_first = False
+                if force_repost:
+                    logger.info(
+                        "Đã hết video 'Chưa tải xuống' trên HatBuiNho và người dùng đã xác nhận ép đăng lại (force_repost=True). Chuyển sang tải video mới nhất.",
+                        "HATBUINHO",
+                    )
+                    pending_indexes = list(range(total_items))
+                    use_latest = True
+                    oldest_first = False
+                else:
+                    logger.info(
+                        "Đã hết video 'Chưa tải xuống' trên HatBuiNho. Dừng lại, không tự ý đăng lại video cũ (chống đăng trùng).",
+                        "HATBUINHO",
+                    )
+                    return downloaded_videos
 
             # Nếu oldest_first = True: đảo ngược danh sách để lấy video cũ nhất trước
             if oldest_first and not use_latest:
@@ -384,10 +603,22 @@ class HatBuiNhoCrawler:
                     raw_script = self._clean_script_text(summary_text)
                     item_hash = hashlib.md5(raw_script.encode('utf-8')).hexdigest()[:12]
 
-                    logger.info(f"Xử lý video #{idx+1} ({'Video mới nhất' if use_latest else 'Chưa tải xuống'}): '{raw_script[:60]}...'", "HATBUINHO")
+                    # LỚP 1: CHẶN TRÙNG TRƯỚC KHI TẢI (KIỂM TRA DB THEO HASH HOẶC KỊCH BẢN)
+                    if not force_repost and db.is_video_already_processed(item_hash, raw_script):
+                        logger.info(
+                            f"[CHẶN TRÙNG] Bỏ qua video #{idx+1} (hash: {item_hash}, '{raw_script[:40]}...') vì đã có trong kho/lịch sử đăng.",
+                            "HATBUINHO"
+                        )
+                        continue
 
-                    await self._select_highest_version_and_open_download(item_locator)
-                    await asyncio.sleep(2)
+                    logger.info(f"Xử lý video #{idx+1} ({'Ép đăng lại / Video mới nhất' if use_latest else 'Chưa tải xuống'}): '{raw_script[:60]}...'", "HATBUINHO")
+
+                    version_info = await self._select_highest_version_and_open_download(item_locator)
+                    if version_info is None:
+                        logger.warning(f"Bỏ qua video #{idx+1} vì tệp trên máy chủ không còn khả dụng (404).", "HATBUINHO")
+                        continue
+
+                    await asyncio.sleep(1.5)
 
                     # Wait for download modal #download_reminder_modal
                     modal = page.locator('#download_reminder_modal').first
@@ -418,30 +649,63 @@ class HatBuiNhoCrawler:
                     logger.info(f"-> Tiêu đề hoàn chỉnh: '{suggested_title}'", "HATBUINHO")
                     logger.info(f"-> Bộ Hashtag tự động: '{hashtags}'", "HATBUINHO")
 
-                    # Trigger download via button #btn_confirm_download_2 ('Tải xuống 2 - có tên')
-                    btn_download_2 = modal.locator('button#btn_confirm_download_2, button:has-text("Tải xuống 2")').first
-                    await btn_download_2.wait_for(state="visible", timeout=8000)
-
-                    async with page.expect_download(timeout=90000) as download_info:
-                        await btn_download_2.click()
-                        logger.info("Đã bấm 'Tải xuống 2 - có tên', đang nhận tệp video...", "HATBUINHO")
-
-                    download = await download_info.value
-                    original_name = download.suggested_filename or f"video_{item_hash}.mp4"
-                    
                     # Sanitize filename
-                    clean_name = re.sub(r'[\\/*?:"<>|]', "", original_name)
+                    file_name_candidate = version_info.get("suggested_filename") or f"video_{item_hash}.mp4"
+                    clean_name = re.sub(r'[\\/*?:"<>|]', "", file_name_candidate)
                     if not clean_name.endswith(".mp4"):
                         clean_name += ".mp4"
 
                     target_file_path = os.path.join(DOWNLOADS_DIR, f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{clean_name}")
-                    await download.save_as(target_file_path)
 
-                    file_size = os.path.getsize(target_file_path) if os.path.exists(target_file_path) else 0
+                    download_succeeded = False
+
+                    # Cách 1: Tải qua sự kiện modal của trình duyệt
+                    try:
+                        btn_download_2 = modal.locator('button#btn_confirm_download_2, button:has-text("Tải xuống 2")').first
+                        if await btn_download_2.is_visible(timeout=5000):
+                            async with page.expect_download(timeout=45000) as download_info:
+                                await btn_download_2.click()
+                                logger.info("Đã bấm 'Tải xuống 2 - có tên', đang nhận tệp video qua trình duyệt...", "HATBUINHO")
+                            download = await download_info.value
+                            await download.save_as(target_file_path)
+                            if os.path.exists(target_file_path) and os.path.getsize(target_file_path) > 0:
+                                download_succeeded = True
+                    except Exception as dl_ex:
+                        logger.warning(f"Tải qua modal trình duyệt chưa thành công ({dl_ex}). Kích hoạt cơ chế tải trực tiếp dự phòng...", "HATBUINHO")
+
+                    # Cách 2: Tải trực tiếp stream từ media_url nếu Cách 1 không thành công
+                    if not download_succeeded and version_info.get("media_url"):
+                        logger.info("Tiến hành tải trực tiếp dự phòng từ link media...", "HATBUINHO")
+                        download_succeeded = await self._direct_download_media(
+                            page,
+                            version_info.get("media_url"),
+                            target_file_path,
+                            version_info.get("order_id")
+                        )
+
+                    if not download_succeeded or not os.path.exists(target_file_path) or os.path.getsize(target_file_path) == 0:
+                        raise RuntimeError(f"Không thể tải tệp video cho video #{idx+1} bằng cả 2 cách.")
+
+                    file_size = os.path.getsize(target_file_path)
                     logger.success(f"Tải video thành công: {os.path.basename(target_file_path)} ({file_size // 1024} KB)", "HATBUINHO")
 
+                    # LỚP 2: CHẶN TRÙNG DUNG LƯỢNG FILE (BYTE-TO-BYTE)
+                    if not force_repost and file_size > 0:
+                        dup_vid = db.get_video_by_file_size(file_size)
+                        if dup_vid:
+                            logger.warning(
+                                f"[CHẶN TRÙNG DUNG LƯỢNG] Tệp vừa tải có dung lượng {file_size:,} bytes trùng khớp 100% với video #{dup_vid['id']} ('{dup_vid.get('title')}') đã có trong DB. Xóa tệp và bỏ qua không đăng lại!",
+                                "HATBUINHO"
+                            )
+                            try:
+                                if os.path.exists(target_file_path):
+                                    os.remove(target_file_path)
+                            except Exception:
+                                pass
+                            continue
+
                     video_record = {
-                        "hatbuinho_id": item_hash if not use_latest else f"{item_hash}_{datetime.now().strftime('%H%M%S')}",
+                        "hatbuinho_id": item_hash if not force_repost else f"{item_hash}_{datetime.now().strftime('%H%M%S')}",
                         "title": clean_name.replace(".mp4", ""),
                         "raw_script": raw_script,
                         "suggested_title": suggested_title,

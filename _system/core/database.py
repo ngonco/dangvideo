@@ -66,7 +66,10 @@ class Database:
                 hashtags = COALESCE(excluded.hashtags, videos.hashtags),
                 file_path = COALESCE(excluded.file_path, videos.file_path),
                 file_size = COALESCE(excluded.file_size, videos.file_size),
-                status = COALESCE(excluded.status, videos.status)
+                status = CASE 
+                    WHEN videos.status IN ('posted', 'cleaned') THEN videos.status 
+                    ELSE COALESCE(excluded.status, videos.status) 
+                END
             """, (
                 video_data.get("hatbuinho_id"),
                 video_data.get("title", ""),
@@ -79,7 +82,73 @@ class Database:
                 video_data.get("created_date_str", "")
             ))
             conn.commit()
-            return cursor.lastrowid
+            
+            cursor.execute("SELECT id FROM videos WHERE hatbuinho_id = ?", (video_data.get("hatbuinho_id"),))
+            row = cursor.fetchone()
+            return row["id"] if row else cursor.lastrowid
+
+    def is_video_already_processed(self, hatbuinho_id: str, raw_script: str = "") -> bool:
+        """Kiểm tra video đã tồn tại trong DB (đã tải, đã đăng, hoặc đã dọn dẹp)."""
+        if not hatbuinho_id:
+            return False
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            base_id = hatbuinho_id.split("_")[0]
+            cursor.execute("""
+            SELECT id, status FROM videos 
+            WHERE hatbuinho_id = ? 
+               OR hatbuinho_id LIKE ? 
+            LIMIT 1
+            """, (hatbuinho_id, f"{base_id}_%"))
+            row = cursor.fetchone()
+            if row:
+                return True
+            
+            if raw_script and len(raw_script.strip()) > 20:
+                cursor.execute("""
+                SELECT id, status FROM videos 
+                WHERE raw_script = ? 
+                LIMIT 1
+                """, (raw_script.strip(),))
+                if cursor.fetchone():
+                    return True
+            return False
+
+    def get_video_by_file_size(self, file_size: int, exclude_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Kiểm tra xem có video nào trong DB có cùng dung lượng byte chính xác hay không."""
+        if not file_size or file_size <= 0:
+            return None
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if exclude_id:
+                cursor.execute("""
+                SELECT id, hatbuinho_id, title, status, file_size, file_path 
+                FROM videos 
+                WHERE file_size = ? AND id != ?
+                LIMIT 1
+                """, (file_size, exclude_id))
+            else:
+                cursor.execute("""
+                SELECT id, hatbuinho_id, title, status, file_size, file_path 
+                FROM videos 
+                WHERE file_size = ?
+                LIMIT 1
+                """, (file_size,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    def get_successful_platforms_for_video(self, video_id: int) -> List[str]:
+        """Lấy danh sách các nền tảng mà video này đã đăng thành công."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT DISTINCT platform FROM post_history 
+            WHERE video_id = ? AND status = 'success'
+            """, (video_id,))
+            rows = cursor.fetchall()
+            return [r["platform"] for r in rows]
 
     def get_video_by_id(self, video_id: int) -> Optional[Dict[str, Any]]:
         with self.get_connection() as conn:
@@ -106,6 +175,39 @@ class Database:
             if row:
                 return dict(row)
             return None
+
+    def get_pending_videos_list(self) -> List[Dict[str, Any]]:
+        """Lấy toàn bộ danh sách video đang chờ trong kho hàng đợi (FIFO)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT id, hatbuinho_id, title, raw_script, suggested_title, hashtags, file_path, file_size, status, created_date_str, downloaded_at
+            FROM videos 
+            WHERE status = 'downloaded' 
+              AND file_path IS NOT NULL 
+              AND file_path != ''
+            ORDER BY id ASC
+            """)
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    def remove_video_from_queue(self, video_id: int) -> bool:
+        """Xóa video khỏi kho hàng đợi (xóa tệp video và cập nhật status='cleaned')"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM videos WHERE id = ?", (video_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            file_path = row["file_path"]
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
+            cursor.execute("UPDATE videos SET status = 'cleaned', file_path = '' WHERE id = ?", (video_id,))
+            conn.commit()
+            return True
 
     def get_pending_videos_count(self) -> int:
         """Đếm tổng số video đang chờ trong hàng đợi"""

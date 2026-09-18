@@ -78,6 +78,15 @@ DEFAULT_CONFIG = {
     }
 }
 
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    res = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(res.get(k), dict):
+            res[k] = _deep_merge(res[k], v)
+        else:
+            res[k] = v
+    return res
+
 class ConfigManager:
     def __init__(self, path: str = CONFIG_PATH):
         self.path = path
@@ -90,7 +99,7 @@ class ConfigManager:
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data
+                return _deep_merge(DEFAULT_CONFIG, data)
         except Exception:
             return DEFAULT_CONFIG.copy()
 
@@ -102,8 +111,12 @@ class ConfigManager:
     def get(self, key: str, default: Any = None) -> Any:
         return self._config.get(key, default)
 
+    def get_platform_config(self, platform_name: str) -> Dict[str, Any]:
+        platforms = self._config.get("platforms", {})
+        return platforms.get(platform_name, {})
+
     def update(self, updates: Dict[str, Any]):
-        self._config.update(updates)
+        self._config = _deep_merge(self._config, updates)
         self.save_config(self._config)
 
     @property
@@ -111,3 +124,4 @@ class ConfigManager:
         return self._config
 
 config_mgr = ConfigManager()
+config_manager = config_mgr
