@@ -45,6 +45,47 @@ def _headless_enabled() -> bool:
     return bool(config_mgr.get("browser", {}).get("headless", True))
 
 
+def cleanup_profile_locks(profile_dir: str):
+    """
+    Dọn dẹp stale parent.lock của riêng profile_dir này.
+    TUYỆT ĐỐI KHÔNG tắt các tiến trình Camoufox của các phần mềm khác (như Agent Scan Viral).
+    Chỉ tắt tiến trình camoufox.exe nào đang thực sự chạy profile_dir này nếu bị treo.
+    """
+    lock_path = os.path.join(profile_dir, "parent.lock")
+    if not os.path.exists(lock_path):
+        return
+
+    # Thử xóa trực tiếp nếu tiến trình cũ đã thoát
+    try:
+        os.remove(lock_path)
+        return
+    except Exception:
+        pass
+
+    # Nếu file lock đang bị giữ, tìm chính xác PID của Camoufox đang dùng profile này
+    try:
+        import psutil
+        norm_target = os.path.normpath(profile_dir).lower()
+        for p in psutil.process_iter(['name', 'cmdline']):
+            try:
+                name = (p.info['name'] or '').lower()
+                if 'camoufox' in name:
+                    cmdline = " ".join(p.info['cmdline'] or []).lower()
+                    if norm_target in cmdline:
+                        p.kill()
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Thử xóa lại lock_path sau khi tắt tiến trình mồ côi của riêng profile này
+    try:
+        if os.path.exists(lock_path):
+            os.remove(lock_path)
+    except Exception:
+        pass
+
+
 class BrowserEngine:
     def __init__(self):
         self.cm: Optional[AsyncCamoufox] = None
@@ -80,19 +121,8 @@ class BrowserEngine:
             user_data_dir = os.path.join(PROFILES_DIR, profile_name)
             os.makedirs(user_data_dir, exist_ok=True)
 
-            # Dọn dẹp stale parent.lock nếu có từ phiên trước
-            lock_path = os.path.join(user_data_dir, "parent.lock")
-            if os.path.exists(lock_path):
-                try:
-                    os.remove(lock_path)
-                except Exception:
-                    try:
-                        import subprocess
-                        subprocess.run(["taskkill", "/F", "/IM", "camoufox.exe"], capture_output=True, timeout=5)
-                        if os.path.exists(lock_path):
-                            os.remove(lock_path)
-                    except Exception:
-                        pass
+            # Dọn dẹp stale parent.lock của riêng profile này (an toàn, không đụng app khác)
+            cleanup_profile_locks(user_data_dir)
 
             logger.info(
                 f"Khởi động trình duyệt Camoufox Anti-detect (Profile: {profile_name}, Headless: {headless}, Mute={mute_audio})...",
@@ -277,15 +307,12 @@ class BrowserEngine:
         self.is_headless = None
         self.is_muted = None
 
-        # Đợi giải phóng lock và dọn parent.lock nếu còn sót
+        # Đợi giải phóng lock và dọn parent.lock nếu còn sót của riêng profile Auto_Dang_video
         await asyncio.sleep(0.5)
         for p_name in ["camoufox", "default"]:
-            lock_path = os.path.join(PROFILES_DIR, p_name, "parent.lock")
-            if os.path.exists(lock_path):
-                try:
-                    os.remove(lock_path)
-                except Exception:
-                    pass
+            p_dir = os.path.join(PROFILES_DIR, p_name)
+            if os.path.exists(p_dir):
+                cleanup_profile_locks(p_dir)
 
     async def close(self):
         async with self._lock:

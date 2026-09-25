@@ -40,6 +40,7 @@ cmd = [
     "--hidden-import", "automation.posters.tiktok_poster",
     "--hidden-import", "core.email_reporter",
     "--hidden-import", "core.schedule_helper",
+    "--hidden-import", "psutil",
     "--collect-all", "camoufox",
     "--collect-all", "browserforge",
     "--collect-all", "apify_fingerprint_datapoints",
