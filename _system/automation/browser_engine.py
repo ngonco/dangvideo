@@ -80,6 +80,20 @@ class BrowserEngine:
             user_data_dir = os.path.join(PROFILES_DIR, profile_name)
             os.makedirs(user_data_dir, exist_ok=True)
 
+            # Dọn dẹp stale parent.lock nếu có từ phiên trước
+            lock_path = os.path.join(user_data_dir, "parent.lock")
+            if os.path.exists(lock_path):
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    try:
+                        import subprocess
+                        subprocess.run(["taskkill", "/F", "/IM", "camoufox.exe"], capture_output=True, timeout=5)
+                        if os.path.exists(lock_path):
+                            os.remove(lock_path)
+                    except Exception:
+                        pass
+
             logger.info(
                 f"Khởi động trình duyệt Camoufox Anti-detect (Profile: {profile_name}, Headless: {headless}, Mute={mute_audio})...",
                 "BROWSER",
@@ -88,6 +102,9 @@ class BrowserEngine:
             user_prefs = {
                 "dom.webdriver.enabled": False,
                 "useAutomationExtension": False,
+                "layers.acceleration.disabled": True,
+                "gfx.webrender.software": True,
+                "gfx.direct3d11.enable-debug-layer": False,
             }
             if mute_audio:
                 user_prefs["media.volume_scale"] = "0.0"
@@ -232,12 +249,16 @@ class BrowserEngine:
         }
         url = urls.get(platform, "https://www.google.com")
         
-        # Đóng context cũ nếu đang chạy headless để mở cửa sổ trực quan
-        await self.close()
-        ctx = await self.get_context(headless=False)
-        page = await self.get_page(ctx)
-        await page.goto(url)
-        logger.info(f"Đã mở trang đăng nhập {platform.upper()} trên trình duyệt Camoufox.", "BROWSER")
+        try:
+            logger.info(f"Đang chuẩn bị mở trình duyệt Camoufox để đăng nhập {platform.upper()}...", "BROWSER")
+            # Đóng context cũ nếu đang chạy headless để mở cửa sổ trực quan
+            await self.close()
+            ctx = await self.get_context(headless=False)
+            page = await self.get_page(ctx)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            logger.info(f"Đã mở trang đăng nhập {platform.upper()} trên trình duyệt Camoufox.", "BROWSER")
+        except Exception as e:
+            logger.error(f"Lỗi khi mở trang đăng nhập {platform.upper()}: {e}", "BROWSER")
 
     async def _close_context_unlocked(self):
         if self.cm:
@@ -255,6 +276,16 @@ class BrowserEngine:
             self.context = None
         self.is_headless = None
         self.is_muted = None
+
+        # Đợi giải phóng lock và dọn parent.lock nếu còn sót
+        await asyncio.sleep(0.5)
+        for p_name in ["camoufox", "default"]:
+            lock_path = os.path.join(PROFILES_DIR, p_name, "parent.lock")
+            if os.path.exists(lock_path):
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    pass
 
     async def close(self):
         async with self._lock:
