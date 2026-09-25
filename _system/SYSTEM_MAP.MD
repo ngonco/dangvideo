@@ -8,6 +8,7 @@
 > 4. **BỘ LỌC AN TOÀN:** Chế độ tự động hàng ngày chỉ tải video tạo **trước hôm nay** (`exclude_today = True`).
 > 5. **KIỂM THỬ TRÊN TRÌNH DUYỆT THẬT** (`test_*_retry.py` / `test_full_suite.py` hoặc `.exe`).
 > 6. **KHÔNG ĐẨY LÊN GITHUB:** cookie / `browser_profiles`, `.env`, `config.json` (mật khẩu), `data.db`, `.exe`. User tải `.exe` từ **GitHub Releases**, không từ git.
+> 7. **ĐỒNG BỘ GITHUB SAU KHI ĐÓNG GÓI:** Sau khi đóng gói xong (`build_exe.py` hoặc sửa đổi mã nguồn), BẮT BUỘC phải đưa mã nguồn cập nhật lên GitHub (`git add`, `git commit`, `git push origin main` hoặc `publish_github_release.py`) để đảm bảo code trên GitHub luôn được đồng bộ mới nhất.
 
 ---
 
@@ -145,6 +146,20 @@ Repo: https://github.com/ngonco/dangvideo
 - Click đúp → Dashboard `http://127.0.0.1:8000` → điền HatBuiNho trên Dashboard → **Mở Trình Duyệt Đăng Nhập** từng kênh một lần.
 - Mã nguồn (không gồm .exe): ZIP nhánh `main`. Copy `config.example.json` → `config.json` nếu chạy từ Python.
 
+### 3.1. Quy trình bắt buộc sau khi đóng gói xong
+
+> [!IMPORTANT]
+> **SAU KHI ĐÓNG GÓI XONG THÌ PHẢI ĐƯA LÊN GITHUB**:
+> Bất cứ khi nào hoàn tất quá trình đóng gói (`build_exe.py` hoặc sửa đổi mã nguồn), bắt buộc phải đẩy mã nguồn lên GitHub ngay lập tức để đồng bộ repository:
+> 1. Kiểm tra `git status` đảm bảo không bị dính file nhạy cảm (`config.json`, `.env`, `data.db`, `.exe`, `browser_profiles/`).
+> 2. Chạy commit và push mã nguồn lên nhánh chính:
+>    ```bash
+>    git add .
+>    git commit -m "Nội dung cập nhật sau khi đóng gói"
+>    git push origin main
+>    ```
+> 3. Nếu muốn phát hành bản chạy mới cho người dùng tải `.exe`, chạy `python _system/publish_github_release.py` để tự động tạo GitHub Release kèm file `.exe`.
+
 ### Phát hành bản mới — cách chính thức duy nhất
 
 Không làm tay từng bước. Sau khi sửa code, **chỉ chạy**:
@@ -247,7 +262,10 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 | `POST` | `/api/videos/{video_id}/open-player` | Mở tệp video bằng trình phát mặc định của Windows (VLC/Media Player) |
 | `DELETE` | `/api/videos/{video_id}/queue` | Hủy bỏ & xóa tệp video khỏi kho hàng đợi |
 | `POST` | `/api/action/open-downloads-folder` | Mở thư mục downloads trong File Explorer |
-| `GET` | `/api/logs` | Nhật ký |
+| `POST` | `/api/action/open-logs-folder` | Mở thư mục logs trong File Explorer |
+| `GET` | `/api/logs` | Nhật ký (in-memory gần nhất) |
+| `GET` | `/api/logs/file` | Đọc nội dung file app.log |
+| `GET` | `/api/logs/download` | Tải về file app.log |
 | `GET`/`POST` | `/api/system/autostart` | Trạng thái / bật tắt khởi động Windows |
 | `POST` | `/api/schedule/timeslots` | Mốc giờ + reload scheduler |
 | `POST` | `/api/action/toggle-scheduler` | Bật/tắt auto |
@@ -300,14 +318,17 @@ Một trang cuộn duy nhất:
 
 ### Quy Tắc 7: HatBuiNho cookie-first & Cơ Chế Tải Đa Phiên Bản / Đơn Bản
 - Có `#btn_view_history` thì không điền form. Thiếu username/password trên Dashboard thì không spam login. Đóng Đã đọc → Video → tab Đã xong.
+- **Nút tải linh hoạt:** Hỗ trợ tìm và bấm cả nút "Tải xuống" và "Tải lại" trên thẻ video/panel phiên bản.
 - **Phiên bản & Tải xuống:**
-  - **Video đơn bản (1 bản duy nhất / không có tab phụ):** Bấm trực tiếp nút "Tải xuống" của thẻ video để mở `#download_reminder_modal`.
+  - **Video đơn bản (1 bản duy nhất / không có tab phụ):** Bấm trực tiếp nút "Tải xuống" / "Tải lại" của thẻ video để mở `#download_reminder_modal`.
   - **Video đa phiên bản (có từ 2 tab `.history-variant-tab` trở lên):** Tự động phân tích timestamp tạo video từ link media (`YYYYMMDD_HHMMSS`), ưu tiên chọn phiên bản mới nhất và kiểm tra HTTP 200 còn sống trên CDN. Nếu bản mới nhất bị lỗi 404 (do file cũ hết hạn), tự động fallback sang phiên bản khác còn sống. Chuyển tab sang phiên bản đã chọn và bấm nút "Tải xuống" trong panel tương ứng.
   - **Tải tệp & Cơ chế dự phòng kép:** Ưu tiên bấm `#btn_confirm_download_2` ('Tải xuống 2 - có tên') qua Playwright download. Nếu trình duyệt báo hủy (`canceled`) hoặc lỗi, hệ thống tự động kích hoạt **Cơ chế tải trực tiếp dự phòng** qua stream URL media về thư mục `downloads/` và gọi API ghi nhận `postTrackDownload`. Nếu toàn bộ link của video đều 404, ghi nhật ký cảnh báo và tự động chuyển sang video tiếp theo.
+  - **Chẩn đoán log:** Ghi rõ số lượng 'Chưa tải xuống' vs 'Đã tải xuống', lý do bỏ qua từng mục (trùng hash Lớp 1, trùng byte dung lượng Lớp 2, tạo hôm nay), và thông báo rõ khi toàn bộ video trên web đều đã tải xong.
+  - **Lưu trữ Log:** Tự động ghi persistent log ra `_system/logs/app.log` (Rotating 5MB x 5 file, UTF-8), hỗ trợ mở thư mục và tải file log trên Dashboard.
 
-### Quy Tắc 8: AI Vilao
-- **Khi tải:** `suggest_popular_hashtags` — 3–5 hashtag phổ biến, gộp với kho đạo lý (`#luatnhanqua`, `#loiphatday`…). Thiếu `VILAO_API_KEY` → chỉ kho đạo lý, không chặn tải. Cấm `#hatbuinho` / chữ ký thương hiệu (`custom_caption.append_text` mặc định trống).
-- **Khi lỗi UI:** `diagnose_and_recover` tối đa 8 bước. Instagram được phép bấm Share. Không xử lý được → email + skip kênh.
+### Quy Tắc 8: Hashtag & Ổn Định
+- **Khi tải:** 100% sử dụng kho hashtag đạo lý phong phú nội bộ (`#luatnhanqua`, `#loiphatday`…), không phụ thuộc external AI để tránh lỗi 403 và độ trễ mạng. Cấm `#hatbuinho` / chữ ký thương hiệu (`custom_caption.append_text` mặc định trống).
+- **Khi lỗi UI:** Tự động chụp ảnh màn hình lưu `debug_screenshots/`, ghi log chi tiết, không chặn tiến trình.
 
 ### Quy Tắc 9: Không leak khi push GitHub
 - Không `git add` cookie, `.env`, `config.json`, `data.db`, `.exe`. Phát hành `.exe` bằng GitHub Release.
@@ -352,6 +373,7 @@ Một trang cuộn duy nhất:
 | Facebook đăng tường / kẹt lịch | Sai composer; calendar che nút | Prodash Reel; helper text; Schedule footer; Copy link |
 | Instagram không hẹn giờ | Web không có Lên lịch | Share ngay; copy `page.url` |
 | YouTube Daily upload limit | Banner shadow DOM | Dừng kênh, email, không Next |
+| YouTube 'Hết thời gian chờ đăng nhập' dù đã đăng nhập | Headless Chromium bị chặn bởi màn hình 'Improve your experience' (unsupported browser) | Set desktop Chrome User-Agent, truy cập kèm `?approve_browser_access=true`, tự động click 'Skip to YouTube Studio' và kiểm tra `studio.youtube.com/channel/` |
 | User không có .exe trong git clone | `.exe` không nằm trong git | Tải https://github.com/ngonco/dangvideo/releases/latest |
 
 Tài liệu này khớp mã nguồn hiện tại: native schedule, Instagram permalink thanh địa chỉ, hashtag AI khi tải, phát hành `.exe` qua GitHub Releases.

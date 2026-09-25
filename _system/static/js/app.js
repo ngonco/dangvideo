@@ -137,6 +137,18 @@ function setupEventListeners() {
             document.getElementById('logsTerminal').innerHTML = '<div class="log-line log-info">[HỆ THỐNG] Đã xóa lịch sử nhật ký hiển thị.</div>';
         });
     }
+
+    // Nút Mở Thư Mục Log
+    const btnOpenLogsFolder = document.getElementById('btnOpenLogsFolder');
+    if (btnOpenLogsFolder) {
+        btnOpenLogsFolder.addEventListener('click', openLogsFolder);
+    }
+
+    // Nút Tải File Log
+    const btnDownloadLog = document.getElementById('btnDownloadLog');
+    if (btnDownloadLog) {
+        btnDownloadLog.addEventListener('click', downloadLogFile);
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -1094,7 +1106,7 @@ async function fetchHistory() {
                         return `<span class="btn-view-post link-${plat}">🟢 ${pName} (Đã đăng)</span>`;
                     }
                 } else {
-                    return `<span class="btn-view-post badge-failed" title="Chi tiết lỗi: ${escapeHtml(p.error_message || 'Thất bại')}">❌ ${pName} (Lỗi)</span>`;
+                    return `<button type="button" class="btn-view-post badge-failed" style="cursor: pointer; border: 1px solid #f87171; background: #fef2f2; border-radius: 6px; font-weight: 600; padding: 4px 8px; transition: all 0.2s;" title="Chi tiết lỗi: ${escapeHtml(p.error_message || 'Thất bại')} — Bấm để thử đăng lại kênh này!" onclick="retryPostPlatform(${v.id}, '${plat}', event)">❌ ${pName} (Lỗi - Thử lại) 🔄</button>`;
                 }
             }).join(' ');
 
@@ -1114,6 +1126,40 @@ async function fetchHistory() {
         tbody.innerHTML = rowsHtml;
     } catch (e) {
         console.error('Lỗi tải lịch sử:', e);
+    }
+}
+
+async function retryPostPlatform(videoId, platform, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const platUpper = platform.toUpperCase();
+    if (!confirm(`Bạn có muốn thử đăng lại video #${videoId} lên kênh ${platUpper} ngay bây giờ không?`)) {
+        return;
+    }
+
+    showToast(`🚀 Đang chuẩn bị đăng video #${videoId} lên ${platUpper}...`, 'info');
+    try {
+        const res = await fetch('/api/action/post', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                video_id: videoId,
+                target_platforms: [platform]
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`✅ ${data.message}`, 'success');
+            setTimeout(() => {
+                renderHistoryTable();
+            }, 3000);
+        } else {
+            showToast(`❌ ${data.message || data.error || 'Có lỗi xảy ra'}`, 'error');
+        }
+    } catch (e) {
+        showToast('❌ Không thể kết nối tới máy chủ.', 'error');
     }
 }
 
@@ -1263,6 +1309,25 @@ function appendLogLine(log) {
     div.innerText = `[${log.time || ''}] [${log.category || 'SYSTEM'}] ${log.message || ''}`;
     terminal.appendChild(div);
     terminal.scrollTop = terminal.scrollHeight;
+}
+
+async function openLogsFolder() {
+    try {
+        const res = await fetch('/api/action/open-logs-folder', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            showToast('📂 Đã mở thư mục chứa file app.log', 'success');
+        } else {
+            showToast(data.detail || 'Không thể mở thư mục logs', 'error');
+        }
+    } catch (e) {
+        showToast('❌ Lỗi kết nối khi mở thư mục log.', 'error');
+    }
+}
+
+function downloadLogFile() {
+    showToast('📥 Đang tải file app.log...', 'info');
+    window.open('/api/logs/download', '_blank');
 }
 
 // --------------------------------------------------------------------------

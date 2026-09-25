@@ -119,6 +119,66 @@ class YouTubePoster(BasePoster):
             }
         return None
 
+    async def _handle_interstitials_and_dialogs(self, page: Page):
+        """Tự động phát hiện và vượt qua màn hình 'Improve your experience' và các popup của YouTube Studio"""
+        try:
+            # 1. Màn hình 'Improve your experience / You are using an unsupported browser'
+            skip_btn = page.locator('a[href*="approve_browser_access"], a:has-text("Skip to YouTube Studio"), a:has-text("Bỏ qua đến YouTube Studio"), .buttons a.button').first
+            if await skip_btn.is_visible(timeout=1500):
+                logger.info("Phát hiện màn hình cảnh báo trình duyệt YouTube, đang tự động bấm 'Skip to YouTube Studio'...", "YOUTUBE")
+                await skip_btn.click()
+                await asyncio.sleep(4)
+        except Exception:
+            pass
+
+        try:
+            # 2. Các popup Onboarding / Thông báo mới của YouTube Studio (Dismiss, Got it, Tiếp tục)
+            dismiss_btn = page.locator('ytcp-button#dismiss-button, ytcp-button:has-text("DISMISS"), ytcp-button:has-text("BỎ QUA"), ytcp-button:has-text("GOT IT"), ytcp-button:has-text("ĐÃ HIỂU"), ytcp-button:has-text("CONTINUE"), ytcp-button:has-text("TIẾP TỤC")').first
+            if await dismiss_btn.is_visible(timeout=1000):
+                logger.info("Tự động đóng popup thông báo của YouTube Studio...", "YOUTUBE")
+                await dismiss_btn.click()
+                await asyncio.sleep(1)
+        except Exception:
+            pass
+
+    async def _is_studio_logged_in(self, page: Page) -> bool:
+        """Kiểm tra xem người dùng đã thực sự đăng nhập vào YouTube Studio chưa"""
+        # Nếu đang ở trang đăng nhập Google
+        if "accounts.google.com" in page.url or "/signin" in page.url or "/ServiceLogin" in page.url:
+            return False
+
+        # Nếu đã vào URL kênh
+        if "studio.youtube.com/channel/" in page.url:
+            return True
+
+        # Kiểm tra nút Create / Tạo
+        create_selectors = [
+            'button#create-icon',
+            'ytcp-button#create-icon',
+            '#create-icon',
+            'button:has-text("CREATE")',
+            'button:has-text("TẠO")',
+            'button:has-text("Create")',
+            'button:has-text("Tạo")',
+            'ytcp-button[aria-label*="Create" i]',
+            'ytcp-button[aria-label*="Tạo" i]'
+        ]
+        for sel in create_selectors:
+            try:
+                if await page.locator(sel).first.is_visible(timeout=1000):
+                    return True
+            except Exception:
+                pass
+
+        # Kiểm tra Avatar kênh trên header
+        try:
+            if await page.locator('#avatar-btn, ytcp-app-header img#img').first.is_visible(timeout=1000):
+                return True
+        except Exception:
+            pass
+
+        return False
+
     async def post_video(self, page: Page, video_data: Dict[str, Any], privacy_override: Optional[str] = None, schedule_time: Optional[str] = None) -> Dict[str, Any]:
         file_path = video_data.get("file_path", "")
         if not self.validate_video_file(file_path):
@@ -139,11 +199,14 @@ class YouTubePoster(BasePoster):
 
         try:
             logger.info("Mở YouTube Studio (https://studio.youtube.com)...", "YOUTUBE")
-            await page.goto("https://studio.youtube.com", wait_until="domcontentloaded", timeout=45000)
+            await page.goto("https://studio.youtube.com/?approve_browser_access=true", wait_until="domcontentloaded", timeout=45000)
             await asyncio.sleep(4)
 
-            # Check if login is required and wait for user
-            if "accounts.google.com" in page.url or "signin" in page.url or not await page.locator('button#create-icon, ytcp-button#create-icon, button:has-text("CREATE"), button:has-text("TẠO"), button:has-text("Create"), button:has-text("Tạo")').first.is_visible(timeout=5000):
+            # Tự động vượt qua màn hình cảnh báo trình duyệt hoặc popup
+            await self._handle_interstitials_and_dialogs(page)
+
+            # Kiểm tra trạng thái đăng nhập
+            if not await self._is_studio_logged_in(page):
                 logger.warning("👉 Chưa đăng nhập YouTube Studio! Vui lòng hoàn tất đăng nhập trên cửa sổ trình duyệt (hệ thống sẽ tự động chờ tối đa 5 phút)...", "YOUTUBE")
                 try:
                     await page.bring_to_front()
@@ -156,14 +219,13 @@ class YouTubePoster(BasePoster):
                         logger.info(f"⏳ [YOUTUBE] Đang chờ bạn đăng nhập... (Đã qua {sec}/300s)", "YOUTUBE")
                     await asyncio.sleep(3)
                     
-                    if "accounts.google.com" not in page.url and "signin" not in page.url:
-                        btn = page.locator('button#create-icon, ytcp-button#create-icon, button:has-text("CREATE"), button:has-text("TẠO"), button:has-text("Create"), button:has-text("Tạo")').first
-                        if await btn.is_visible(timeout=2000):
-                            logged_in = True
-                            break
+                    await self._handle_interstitials_and_dialogs(page)
+                    if await self._is_studio_logged_in(page):
+                        logged_in = True
+                        break
 
                 if not logged_in:
-                    logger.error("Hết thời gian chờ đăng nhập YouTube (5 phút). Vui lòng đăng nhập trước!", "YOUTUBE")
+                    logger.error(f"Hết thời gian chờ đăng nhập YouTube (5 phút). URL hiện tại: {page.url}", "YOUTUBE")
                     return {"success": False, "error": "Hết thời gian chờ đăng nhập YouTube"}
 
                 logger.success("🎉 Đã phát hiện đăng nhập YouTube thành công! Tiếp tục tiến trình đăng video...", "YOUTUBE")

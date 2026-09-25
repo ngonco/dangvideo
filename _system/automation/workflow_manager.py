@@ -69,12 +69,20 @@ class WorkflowManager:
                 slots = config_mgr.get("schedule", {}).get("post_time_slots", ["08:00", "11:30", "19:30"])
                 queue_summary = db.get_queue_summary(slots_per_day=len(slots))
                 
+                if len(results) > 0:
+                    msg = f"Đã tải về thành công {len(results)} video vào Kho Hàng Đợi! (Hiện có {queue_summary['total_pending']} video, dự kiến đăng trong {queue_summary['estimated_days']} ngày)."
+                else:
+                    if queue_summary['total_pending'] > 0:
+                        msg = f"Toàn bộ video hiển thị trên HatBuiNho đều đã được tải. Kho hàng đợi hiện đang có {queue_summary['total_pending']} video sẵn sàng đăng (dự kiến đăng trong {queue_summary['estimated_days']} ngày)."
+                    else:
+                        msg = "Toàn bộ video hiển thị trên HatBuiNho đều đã được tải/đăng trước đó. Không có video mới để tải thêm."
+
                 return {
                     "success": True,
                     "downloaded_count": len(results),
                     "total_pending": queue_summary["total_pending"],
                     "estimated_days": queue_summary["estimated_days"],
-                    "message": f"Đã tải về thành công {len(results)} video vào Kho Hàng Đợi! (Hiện có {queue_summary['total_pending']} video, dự kiến đăng trong {queue_summary['estimated_days']} ngày)."
+                    "message": msg
                 }
             except Exception as ex:
                 logger.error(f"Lỗi khi tải hàng loạt vào hàng đợi: {ex}", "WORKFLOW")

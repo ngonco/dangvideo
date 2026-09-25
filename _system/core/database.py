@@ -32,7 +32,7 @@ class Database:
                 file_size INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'downloaded',
                 created_date_str TEXT,
-                downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                downloaded_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
             )
             """)
 
@@ -45,7 +45,7 @@ class Database:
                 status TEXT,
                 post_url TEXT,
                 error_message TEXT,
-                posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                posted_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
                 FOREIGN KEY (video_id) REFERENCES videos (id)
             )
             """)
@@ -53,13 +53,14 @@ class Database:
             conn.commit()
 
     def add_or_update_video(self, video_data: Dict[str, Any]) -> int:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
             INSERT INTO videos (
                 hatbuinho_id, title, raw_script, suggested_title, hashtags,
                 file_path, file_size, status, created_date_str, downloaded_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(hatbuinho_id) DO UPDATE SET
                 title = COALESCE(excluded.title, videos.title),
                 suggested_title = COALESCE(excluded.suggested_title, videos.suggested_title),
@@ -79,7 +80,8 @@ class Database:
                 video_data.get("file_path", ""),
                 video_data.get("file_size", 0),
                 video_data.get("status", "downloaded"),
-                video_data.get("created_date_str", "")
+                video_data.get("created_date_str", ""),
+                now_str
             ))
             conn.commit()
             
@@ -248,12 +250,13 @@ class Database:
             return [dict(r) for r in rows]
 
     def record_post(self, video_id: int, platform: str, status: str, post_url: str = "", error_message: str = ""):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
             INSERT INTO post_history (video_id, platform, status, post_url, error_message, posted_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (video_id, platform, status, post_url, error_message))
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, (video_id, platform, status, post_url, error_message, now_str))
             
             cursor.execute("""
             UPDATE videos SET status = 'posted' WHERE id = ? AND ? = 'success'

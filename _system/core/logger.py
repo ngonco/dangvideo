@@ -2,8 +2,14 @@ import os
 import sys
 import logging
 import asyncio
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from typing import List, Dict, Any, Callable
+
+SYSTEM_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGS_DIR = os.path.join(SYSTEM_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOGS_DIR, "app.log")
 
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     try:
@@ -22,6 +28,8 @@ class UILogger:
         self.max_history = max_history
         self.logs: List[Dict[str, Any]] = []
         self.subscribers: List[asyncio.Queue] = []
+        self.log_file = LOG_FILE
+        self.logs_dir = LOGS_DIR
         
         # Setup Python standard logger
         self.logger = logging.getLogger("AutoVideoPoster")
@@ -33,6 +41,19 @@ class UILogger:
                 formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
                 handler.setFormatter(formatter)
                 self.logger.addHandler(handler)
+            except Exception:
+                pass
+
+            try:
+                file_handler = RotatingFileHandler(
+                    LOG_FILE,
+                    maxBytes=5 * 1024 * 1024,
+                    backupCount=5,
+                    encoding="utf-8"
+                )
+                file_formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+                file_handler.setFormatter(file_formatter)
+                self.logger.addHandler(file_handler)
             except Exception:
                 pass
 
@@ -92,4 +113,11 @@ class UILogger:
     def get_recent_logs(self) -> List[Dict[str, Any]]:
         return self.logs.copy()
 
+    def get_log_file_path(self) -> str:
+        return self.log_file
+
+    def get_logs_dir(self) -> str:
+        return self.logs_dir
+
 logger = UILogger()
+

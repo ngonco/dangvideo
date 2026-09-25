@@ -8,11 +8,10 @@ from typing import List, Dict, Any, Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from core.logger import logger
-from core.config_manager import config_mgr
+from core.config_manager import config_mgr, SYSTEM_DIR
 from core.database import db
 from automation.browser_engine import browser_engine, DOWNLOADS_DIR
 from automation.hashtag_manager import hashtag_mgr
-from automation.ai_fallback import diagnose_and_recover, DOWNLOAD_GOAL
 
 class VersionSelectionResult(dict):
     """Kết quả chọn phiên bản, kế thừa dict để truy xuất thuộc tính và hỗ trợ int(result)."""
@@ -102,32 +101,36 @@ class HatBuiNhoCrawler:
         await asyncio.sleep(0.6)
 
     async def _click_download_button(self, target_locator, fallback_target=None) -> bool:
-        """Bấm nút Tải xuống với cơ chế định vị linh hoạt và fallback JavaScript."""
-        try:
-            dl_btn = target_locator.locator("button").filter(has_text="Tải xuống").first
-            if await dl_btn.is_visible(timeout=2500):
-                await dl_btn.scroll_into_view_if_needed()
-                await asyncio.sleep(0.2)
-                await dl_btn.click(timeout=5000)
-                return True
-        except Exception:
-            pass
+        """Bấm nút Tải xuống / Tải lại với cơ chế định vị linh hoạt và fallback JavaScript."""
+        for label in ["Tải xuống", "Tải lại", "TẢI XUỐNG", "TẢI LẠI", "Download"]:
+            try:
+                dl_btn = target_locator.locator("button").filter(has_text=label).first
+                if await dl_btn.is_visible(timeout=1500):
+                    await dl_btn.scroll_into_view_if_needed()
+                    await asyncio.sleep(0.2)
+                    await dl_btn.click(timeout=4000)
+                    logger.info(f"Đã bấm nút '{label}' qua locator.", "HATBUINHO")
+                    return True
+            except Exception:
+                pass
 
         try:
-            clicked = await target_locator.evaluate("""el => {
+            clicked_label = await target_locator.evaluate("""el => {
                 const btns = Array.from(el.querySelectorAll('button'));
                 const dl = btns.find(b => {
-                    const t = (b.innerText || b.textContent || '').replace(/\\s+/g, ' ').trim();
-                    return t.includes('Tải xuống');
+                    const t = (b.innerText || b.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    const oc = (b.getAttribute('onclick') || '').toLowerCase();
+                    return t.includes('tải xuống') || t.includes('tải lại') || t.includes('download') || oc.includes('safemobiledownload');
                 });
                 if (dl) {
                     dl.scrollIntoView({ block: 'center' });
                     dl.click();
-                    return true;
+                    return dl.innerText || dl.textContent || 'Download button';
                 }
-                return false;
+                return null;
             }""")
-            if clicked:
+            if clicked_label:
+                logger.info(f"Đã bấm nút tải qua JS fallback: '{clicked_label.strip()}'.", "HATBUINHO")
                 return True
         except Exception:
             pass
@@ -535,25 +538,50 @@ class HatBuiNhoCrawler:
 
             # Query all video items
             total_items = await page.locator('details.history-order').count()
-            logger.info(f"Tìm thấy tổng cộng {total_items} mục video trên trang.", "HATBUINHO")
+            logger.info(f"Tìm thấy tổng cộng {total_items} mục video trên trang HatBuiNho.", "HATBUINHO")
 
             # Tìm danh sách index các video 'Chưa tải xuống'
             pending_indexes = []
+            downloaded_count_on_page = 0
+            other_status_count = 0
             for idx in range(total_items):
                 try:
                     item_locator = page.locator('details.history-order').nth(idx)
                     if force_latest or force_repost:
                         pending_indexes.append(idx)
                     else:
-                        badge = item_locator.locator('summary span:has-text("Chưa tải xuống")').first
-                        if await badge.is_visible():
+                        badge_pending = item_locator.locator('summary span:has-text("Chưa tải xuống")').first
+                        if await badge_pending.is_visible():
                             pending_indexes.append(idx)
+                        else:
+                            badge_done = item_locator.locator('summary span:has-text("Đã tải xuống")').first
+                            if await badge_done.is_visible():
+                                downloaded_count_on_page += 1
+                            else:
+                                other_status_count += 1
                 except Exception:
                     pass
 
-            logger.info(f"Phát hiện {len(pending_indexes)} video 'Chưa tải xuống'.", "HATBUINHO")
+            logger.info(
+                f"Phân tích trạng thái {total_items} video trên HatBuiNho: "
+                f"{len(pending_indexes)} 'Chưa tải xuống', "
+                f"{downloaded_count_on_page} 'Đã tải xuống'"
+                f"{f', {other_status_count} trạng thái khác' if other_status_count else ''}.",
+                "HATBUINHO"
+            )
 
             use_latest = bool(force_latest or force_repost)
+            if not pending_indexes and not use_latest:
+                slots = config_mgr.get("schedule", {}).get("post_time_slots", ["08:00", "11:30", "19:30"])
+                queue_summary = db.get_queue_summary(slots_per_day=len(slots))
+                total_pending = queue_summary.get("total_pending", 0)
+                logger.info(
+                    f"Toàn bộ {total_items} video hiển thị trên HatBuiNho đều đã có nhãn 'Đã tải xuống' hoặc đã tải về trước đó. "
+                    f"Kho hàng đợi hiện có {total_pending} video sẵn sàng đăng (chống đăng trùng: BẬT).",
+                    "HATBUINHO"
+                )
+                return downloaded_videos
+
             if not pending_indexes and fallback_latest and total_items > 0:
                 if force_repost:
                     logger.info(
@@ -564,8 +592,11 @@ class HatBuiNhoCrawler:
                     use_latest = True
                     oldest_first = False
                 else:
+                    slots = config_mgr.get("schedule", {}).get("post_time_slots", ["08:00", "11:30", "19:30"])
+                    queue_summary = db.get_queue_summary(slots_per_day=len(slots))
+                    total_pending = queue_summary.get("total_pending", 0)
                     logger.info(
-                        "Đã hết video 'Chưa tải xuống' trên HatBuiNho. Dừng lại, không tự ý đăng lại video cũ (chống đăng trùng).",
+                        f"Đã hết video 'Chưa tải xuống' trên HatBuiNho. Dừng lại an toàn, không tự ý đăng lại video cũ (chống đăng trùng). Kho hiện có {total_pending} video sẵn sàng.",
                         "HATBUINHO",
                     )
                     return downloaded_videos
@@ -606,7 +637,7 @@ class HatBuiNhoCrawler:
                     # LỚP 1: CHẶN TRÙNG TRƯỚC KHI TẢI (KIỂM TRA DB THEO HASH HOẶC KỊCH BẢN)
                     if not force_repost and db.is_video_already_processed(item_hash, raw_script):
                         logger.info(
-                            f"[CHẶN TRÙNG] Bỏ qua video #{idx+1} (hash: {item_hash}, '{raw_script[:40]}...') vì đã có trong kho/lịch sử đăng.",
+                            f"[CHẶN TRÙNG LỚP 1] Bỏ qua video #{idx+1} (hash: {item_hash}, '{raw_script[:40]}...') vì đã có trong kho/lịch sử đăng.",
                             "HATBUINHO"
                         )
                         continue
@@ -622,7 +653,19 @@ class HatBuiNhoCrawler:
 
                     # Wait for download modal #download_reminder_modal
                     modal = page.locator('#download_reminder_modal').first
-                    await modal.wait_for(state="visible", timeout=10000)
+                    try:
+                        await modal.wait_for(state="visible", timeout=10000)
+                    except PlaywrightTimeoutError:
+                        shot_path = os.path.join(SYSTEM_DIR, "debug_screenshots", f"hbn_modal_timeout_{idx+1}.png")
+                        try:
+                            await page.screenshot(path=shot_path, full_page=False)
+                        except Exception:
+                            pass
+                        logger.warning(
+                            f"Không thấy modal tải xuống (#download_reminder_modal) của video #{idx+1}. Ảnh debug: {shot_path}",
+                            "HATBUINHO"
+                        )
+                        continue
 
                     # Extract suggested title if available
                     sug_el = modal.locator('#download_title_hashtag_suggestions').first
@@ -634,17 +677,8 @@ class HatBuiNhoCrawler:
                     if not suggested_title:
                         suggested_title = self._extract_clean_first_sentence(raw_script)
                     
-                    # Sinh bộ Hashtag Đạo Lý rồi AI bổ sung hashtag phổ biến (không chữ ký thương hiệu)
+                    # Sinh bộ Hashtag Đạo Lý (100% kho đạo lý thuần túy, không phụ thuộc external AI)
                     hashtags = hashtag_mgr.generate_random_hashtags(raw_script, count=5)
-                    try:
-                        hashtags = await asyncio.to_thread(
-                            hashtag_mgr.enrich_with_popular,
-                            suggested_title,
-                            raw_script,
-                            hashtags,
-                        )
-                    except Exception as tag_ex:
-                        logger.warning(f"Không bổ sung hashtag AI (giữ kho đạo lý): {tag_ex}", "HATBUINHO")
 
                     logger.info(f"-> Tiêu đề hoàn chỉnh: '{suggested_title}'", "HATBUINHO")
                     logger.info(f"-> Bộ Hashtag tự động: '{hashtags}'", "HATBUINHO")
@@ -694,7 +728,7 @@ class HatBuiNhoCrawler:
                         dup_vid = db.get_video_by_file_size(file_size)
                         if dup_vid:
                             logger.warning(
-                                f"[CHẶN TRÙNG DUNG LƯỢNG] Tệp vừa tải có dung lượng {file_size:,} bytes trùng khớp 100% với video #{dup_vid['id']} ('{dup_vid.get('title')}') đã có trong DB. Xóa tệp và bỏ qua không đăng lại!",
+                                f"[CHẶN TRÙNG LỚP 2 - DUNG LƯỢNG] Tệp vừa tải có dung lượng {file_size:,} bytes trùng khớp 100% với video #{dup_vid['id']} ('{dup_vid.get('title')}') đã có trong DB. Đã xóa tệp tạm và bỏ qua không đăng lại!",
                                 "HATBUINHO"
                             )
                             try:
@@ -731,10 +765,13 @@ class HatBuiNhoCrawler:
                         pass
 
                 except Exception as e:
-                    logger.error(f"Lỗi khi xử lý video item #{idx+1}: {str(e)}", "HATBUINHO")
-                    recovered = await diagnose_and_recover(page, "hatbuinho", str(e), goal=DOWNLOAD_GOAL)
-                    if recovered.get("ok"):
-                        logger.success("AI đã xử lý xong bước lệch trên HatBuiNho, tiếp tục quét.", "HATBUINHO")
+                    shot_path = os.path.join(SYSTEM_DIR, "debug_screenshots", f"hbn_item_err_{idx+1}.png")
+                    try:
+                        await page.screenshot(path=shot_path, full_page=False)
+                        logger.error(f"Lỗi khi xử lý video item #{idx+1}: {str(e)} (Ảnh debug: {shot_path})", "HATBUINHO")
+                    except Exception:
+                        logger.error(f"Lỗi khi xử lý video item #{idx+1}: {str(e)}", "HATBUINHO")
+
                     try:
                         await page.evaluate("""() => {
                             const m = document.getElementById('download_reminder_modal');
@@ -748,23 +785,20 @@ class HatBuiNhoCrawler:
             return downloaded_videos
 
         except Exception as ex:
-            logger.error(f"Lỗi trong quá trình quét HatBuiNho: {str(ex)}", "HATBUINHO")
+            shot_path = os.path.join(SYSTEM_DIR, "debug_screenshots", "hbn_scan_err.png")
             try:
                 if page is not None:
-                    recovered = await diagnose_and_recover(page, "hatbuinho", str(ex), goal=DOWNLOAD_GOAL)
-                    if recovered.get("ok"):
-                        return downloaded_videos
-                    diag = recovered.get("diagnosis") or str(ex)
-                    shot = recovered.get("screenshot") or ""
-                else:
-                    diag = str(ex)
-                    shot = ""
+                    await page.screenshot(path=shot_path, full_page=False)
+            except Exception:
+                pass
+            logger.error(f"Lỗi trong quá trình quét HatBuiNho: {str(ex)} (Ảnh debug: {shot_path})", "HATBUINHO")
+            try:
                 from core.email_reporter import email_reporter
                 email_reporter.send_error_alert(
                     platform="hatbuinho",
-                    error_message=diag,
+                    error_message=str(ex),
                     step="Quét tải video HatBuiNho",
-                    details=shot,
+                    details=shot_path,
                 )
             except Exception:
                 pass

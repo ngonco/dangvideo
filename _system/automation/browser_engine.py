@@ -61,6 +61,7 @@ class BrowserEngine:
                         )
                         await self.context.close()
                         self.context = None
+                        await asyncio.sleep(1.2)
                     elif len(self.context.pages) > 0 or not self.context.is_closed():
                         return self.context
                 except Exception:
@@ -89,9 +90,12 @@ class BrowserEngine:
             if mute_audio:
                 chrome_args.append("--mute-audio")
 
+            default_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
             launch_kwargs = {
                 "user_data_dir": user_data_dir,
                 "headless": headless,
+                "user_agent": default_ua,
                 "accept_downloads": True,
                 "viewport": {"width": 1400, "height": 900} if headless else None,
                 "args": chrome_args,
@@ -135,7 +139,7 @@ class BrowserEngine:
             return statuses
 
         try:
-            # Chỉ đọc cookie nếu context đang chạy để tránh khóa trạng thái headless
+            # Nếu context đang chạy, lấy cookie từ context
             if self.context and not self.context.is_closed():
                 cookies = await self.context.cookies()
                 domains = [c.get("domain", "").lower() for c in cookies]
@@ -145,6 +149,40 @@ class BrowserEngine:
                 statuses["instagram"] = any("instagram.com" in d for d in domains)
                 if any("hatbuinho.com" in d for d in domains):
                     statuses["hatbuinho"] = True
+            else:
+                # Nếu context đóng, đọc SQLite Network/Cookies qua file tạm an toàn không khóa file
+                cookie_candidates = [
+                    os.path.join(user_data_dir, "Default", "Network", "Cookies"),
+                    os.path.join(user_data_dir, "Network", "Cookies"),
+                    os.path.join(user_data_dir, "Cookies")
+                ]
+                for c_path in cookie_candidates:
+                    if os.path.exists(c_path):
+                        import tempfile
+                        import shutil
+                        import sqlite3
+                        temp_f = tempfile.NamedTemporaryFile(delete=False)
+                        temp_p = temp_f.name
+                        temp_f.close()
+                        try:
+                            shutil.copy2(c_path, temp_p)
+                            conn = sqlite3.connect(temp_p)
+                            cur = conn.cursor()
+                            cur.execute("SELECT DISTINCT host_key FROM cookies")
+                            hosts = [r[0].lower() for r in cur.fetchall()]
+                            conn.close()
+                            statuses["youtube"] = any("youtube.com" in h or "google.com" in h for h in hosts)
+                            statuses["tiktok"] = any("tiktok.com" in h for h in hosts)
+                            statuses["facebook"] = any("facebook.com" in h for h in hosts)
+                            statuses["instagram"] = any("instagram.com" in h for h in hosts)
+                            if any("hatbuinho.com" in h for h in hosts):
+                                statuses["hatbuinho"] = True
+                            break
+                        finally:
+                            try:
+                                os.unlink(temp_p)
+                            except Exception:
+                                pass
         except Exception:
             pass
 
@@ -154,7 +192,7 @@ class BrowserEngine:
         """Mở cửa sổ trình duyệt nổi để người dùng đăng nhập tài khoản thủ công"""
         urls = {
             "hatbuinho": "https://hatbuinho.com/",
-            "youtube": "https://studio.youtube.com",
+            "youtube": "https://studio.youtube.com/?approve_browser_access=true",
             "tiktok": "https://www.tiktok.com/tiktokstudio/upload",
             "facebook": "https://www.facebook.com/",
             "instagram": "https://www.instagram.com/"
@@ -176,6 +214,7 @@ class BrowserEngine:
                 except Exception:
                     pass
                 self.context = None
+                await asyncio.sleep(1.2)
             self.is_headless = None
             self.is_muted = None
             if self.playwright:

@@ -318,6 +318,45 @@ async def open_downloads_folder():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Không thể mở thư mục downloads: {str(e)}")
 
+@app.post("/api/action/open-logs-folder")
+async def open_logs_folder():
+    logs_dir = logger.get_logs_dir()
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir, exist_ok=True)
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(logs_dir)
+        else:
+            subprocess.Popen(["xdg-open", logs_dir])
+        return {"success": True, "message": "Đã mở thư mục logs"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Không thể mở thư mục logs: {str(e)}")
+
+@app.get("/api/logs/file")
+async def get_log_file_content(lines: int = 500):
+    log_path = logger.get_log_file_path()
+    if not os.path.exists(log_path):
+        return {"success": True, "content": "File log chưa được tạo.", "total_lines": 0}
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+            tail_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+            return {"success": True, "content": "".join(tail_lines), "total_lines": len(all_lines)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Không thể đọc file log: {str(e)}")
+
+@app.get("/api/logs/download")
+async def download_log_file():
+    from datetime import datetime
+    log_path = logger.get_log_file_path()
+    if not os.path.exists(log_path):
+        raise HTTPException(status_code=404, detail="File log chưa tồn tại.")
+    return FileResponse(
+        log_path,
+        media_type="text/plain; charset=utf-8",
+        filename=f"app_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    )
+
 @app.post("/api/action/batch-download-queue")
 async def batch_download_queue():
     from automation.workflow_manager import workflow_mgr

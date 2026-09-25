@@ -383,7 +383,11 @@
                     <div class="logs-container-wrap">
                         <div class="logs-header">
                             <h3>📜 Nhật Ký Hoạt Động Của Hệ Thống</h3>
-                            <button class="btn-clear-logs" id="btnClearLogs">Xóa Nhật Ký</button>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <button class="btn-clear-logs" id="btnOpenLogsFolder" title="Mở thư mục chứa file app.log trên máy tính" style="background: rgba(255,255,255,0.08);">📂 Mở Thư Mục Log</button>
+                                <button class="btn-clear-logs" id="btnDownloadLog" title="Tải file app.log về máy" style="background: rgba(255,255,255,0.08);">📥 Tải File Log</button>
+                                <button class="btn-clear-logs" id="btnClearLogs">Xóa Màn Hình</button>
+                            </div>
                         </div>
                         <div class="logs-terminal" id="logsTerminal">
                             <div class="log-line log-info">[HỆ THỐNG] Đang kết nối máy chủ...</div>

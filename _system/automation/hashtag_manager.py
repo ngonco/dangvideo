@@ -94,15 +94,8 @@ class HashtagManager:
         return " ".join(out)
 
     def enrich_with_popular(self, title: str, script_text: str, dharma: str) -> str:
-        """Gộp hashtag đạo lý với 3–5 hashtag phổ biến từ AI. Thiếu API thì giữ kho đạo lý."""
-        from automation.ai_fallback import suggest_popular_hashtags
-
-        extra = suggest_popular_hashtags(title or "", script_text or "", dharma or "")
-        if not extra:
-            return dharma
-        merged = self.merge_hashtags(dharma, extra)
-        logger.info(f"Hashtag AI phổ biến: {' '.join(extra)}", "HASHTAG")
-        return merged
+        """Sử dụng 100% kho hashtag đạo lý phong phú, không phụ thuộc external AI."""
+        return dharma
 
 
 hashtag_mgr = HashtagManager()
