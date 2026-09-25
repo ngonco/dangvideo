@@ -85,14 +85,14 @@ try {
 if (-not $depsOk) {
     Write-Host ""
     Write-Host "=================================================================" -ForegroundColor Green
-    Write-Host "  📦 DANG CAI DAT CAC THU VIEN LAN DAU (FastAPI, Playwright...)" -ForegroundColor Green
+    Write-Host "  📦 DANG CAI DAT CAC THU VIEN LAN DAU (FastAPI, Camoufox...)" -ForegroundColor Green
     Write-Host "  ⏳ Qua trinh nay chi dien ra mot lan duy nhat (~30 giay)..." -ForegroundColor Yellow
     Write-Host "=================================================================" -ForegroundColor Green
     Write-Host ""
     & $PyExe -m pip install --upgrade pip --no-warn-script-location --quiet
     & $PyExe -m pip install --no-warn-script-location -r $ReqFile
-    Write-Host "[CAI DAT] Dang tai trinh duyet Playwright Chromium..." -ForegroundColor Green
-    & $PyExe -m playwright install chromium
+    Write-Host "[CAI DAT] Dang tai trinh duyet Camoufox Anti-detect..." -ForegroundColor Green
+    & $PyExe -m camoufox fetch
     Write-Host "[CAI DAT] Hoan tat thiet lap moi truong 100%!" -ForegroundColor Green
 }
 

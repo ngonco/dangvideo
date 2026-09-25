@@ -46,8 +46,8 @@ graph TD
         EmailReporter[email_reporter.py]
     end
 
-    subgraph BrowserEngine [Playwright Chromium persistent]
-        Browser[browser_profiles/default - CHI TREN MAY]
+    subgraph BrowserEngine [Camoufox Anti-detect persistent]
+        Browser[browser_profiles/camoufox - CHI TREN MAY]
     end
 
     subgraph Platforms [Nguon tai va dang]
@@ -116,7 +116,7 @@ Auto_Dang_video/
     │   └── autostart_manager.py
     │
     ├── automation/
-    │   ├── browser_engine.py  # Persistent Chromium, --mute-audio, profile local
+    │   ├── browser_engine.py  # Persistent Camoufox (Firefox Anti-detect), mute-audio, humanize
     │   ├── hashtag_manager.py   # Kho đạo lý + gộp hashtag AI khi tải
     │   ├── hatbuinho_crawler.py
     │   ├── ai_fallback.py      # Hashtag AI khi tải; recover UI khi lỗi
@@ -130,7 +130,7 @@ Auto_Dang_video/
     │
     ├── scheduler/task_scheduler.py
     ├── static/                 # Dashboard (index.html, css, js)
-    └── browser_profiles/default/  # Cookie phiên đăng nhập — gitignore, KHÔNG lên GitHub
+    └── browser_profiles/camoufox/  # Cookie phiên đăng nhập Camoufox — gitignore, KHÔNG lên GitHub
 ```
 
 ---
@@ -353,7 +353,7 @@ Một trang cuộn duy nhất:
 ### 10.3. Cấu hình
 - Local: `_system/config.json` (gitignore). Mẫu: `config.example.json`.
 - `browser.headless=true` (mặc định): ẩn cửa sổ khi tải/đăng. Nút Dashboard **HIỂN THỊ QUÁ TRÌNH ĐĂNG** bật cửa sổ. **Mở Trình Duyệt Đăng Nhập** luôn hiện.
-- `browser.mute_audio=true` (mặc định): Chromium Playwright `--mute-audio`. Nút Dashboard đổi được; Chrome của user không bị mute.
+- `browser.mute_audio=true` (mặc định): Camoufox `media.volume_scale=0.0`. Nút Dashboard đổi được; trình duyệt của user không bị ảnh hưởng.
 - `schedule_publish.default_time=10:00`, `target_date=tomorrow`.
 - `platforms.facebook`: `target_type: "personal"` (mặc định), `page_name: ""`, `page_url: ""`.
 - `custom_caption.append_text` trống (không `#hatbuinho`).
@@ -367,7 +367,7 @@ Một trang cuộn duy nhất:
 | :--- | :--- | :--- |
 | `stdout` None / `isatty` | PyInstaller `--noconsole` | `DummyWriter` trong `tray_app.py` / `logger.py` |
 | `signal only works in main thread` | Uvicorn trong thread | `install_signal_handlers = lambda: None` |
-| Profile Playwright bị khóa | Chromium leftover giữ `browser_profiles` | Chỉ tắt leftover `ms-playwright` / `.exe` app, không kill Chrome user |
+| Profile trình duyệt bị khóa | Tiến trình Camoufox cũ còn treo giữ `browser_profiles/camoufox` | Tắt tiến trình camoufox.exe trong Task Manager |
 | HatBuiNho không thấy video | Overlay Đã đọc / chưa bấm Video | `#btn_view_history` rồi `#history_tab_done` |
 | TikTok draft / Continue to post | Bản nháp hoặc hộp xác nhận lịch | Discard; trong Continue to post bấm Post now (xác nhận lịch) |
 | Facebook đăng tường / kẹt lịch | Sai composer; calendar che nút | Prodash Reel; helper text; Schedule footer; Copy link |

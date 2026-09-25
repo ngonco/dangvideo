@@ -42,13 +42,12 @@ echo [3/6] Cấu hình môi trường Python Embedded...
 powershell -Command "$pth = Get-Content '%DIST_DIR%\python_embed\python311._pth'; $pth = $pth -replace '#import site', 'import site'; $pth | Set-Content '%DIST_DIR%\python_embed\python311._pth'"
 
 :: 5. Tải và cài đặt PIP vào Python Embedded
-echo [4/6] Cài đặt PIP và các gói thư viện (FastAPI, Playwright, Uvicorn)...
+echo [4/6] Cài đặt PIP và các gói thư viện (FastAPI, Camoufox, Uvicorn)...
 powershell -Command "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%BUILD_DIR%\get-pip.py'"
 "%DIST_DIR%\python_embed\python.exe" "%BUILD_DIR%\get-pip.py" --no-warn-script-location
 
 "%DIST_DIR%\python_embed\python.exe" -m pip install --no-warn-script-location -r "%ROOT_DIR%requirements.txt"
-set "PLAYWRIGHT_BROWSERS_PATH=%DIST_DIR%\python_embed\browsers"
-"%DIST_DIR%\python_embed\python.exe" -m playwright install chromium
+"%DIST_DIR%\python_embed\python.exe" -m camoufox fetch
 
 :: 6. Sao chép mã nguồn ứng dụng vào thư mục Portable
 echo [5/6] Đang sao chép mã nguồn ứng dụng...

@@ -38,15 +38,15 @@ if (Test-Path $SourceFolder) {
 Remove-Item -Path $TempZip -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $ExtractTemp -Recurse -Force -ErrorAction SilentlyContinue
 
-# 3. Cài đặt thư viện Python & Playwright
-Write-Host "[3/5] Đang cài đặt thư viện và trình duyệt Chromium..." -ForegroundColor Green
+# 3. Cài đặt thư viện Python & Camoufox
+Write-Host "[3/5] Đang cài đặt thư viện và trình duyệt Camoufox..." -ForegroundColor Green
 Set-Location -Path $InstallDir
 
 if (Get-Command python -ErrorAction SilentlyContinue) {
     Write-Host "-> Đang cài đặt các thư viện Python..." -ForegroundColor Gray
     python -m pip install --upgrade pip --quiet
     python -m pip install -r requirements.txt --quiet
-    python -m playwright install chromium
+    python -m camoufox fetch
 } else {
     Write-Host "-> Chưa phát hiện Python trên máy. Sẽ chạy script install.bat khi khởi động." -ForegroundColor Yellow
 }

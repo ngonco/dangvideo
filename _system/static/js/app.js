@@ -246,7 +246,7 @@ function updateMuteUI(muted) {
         btn.classList.remove('is-unmuted');
         if (icon) icon.innerText = '🔇';
         if (main) main.innerText = 'TẮT TIẾNG TRÌNH DUYỆT';
-        if (sub) sub.innerText = 'Đang BẬT — mọi cửa sổ Playwright im lặng';
+        if (sub) sub.innerText = 'Đang BẬT — mọi cửa sổ Camoufox im lặng';
     } else {
         btn.classList.add('is-unmuted');
         if (icon) icon.innerText = '🔊';
@@ -324,8 +324,8 @@ async function toggleMuteAudio() {
     await saveBrowserConfig(
         { mute_audio: nextMuted },
         nextMuted
-            ? '🔇 Đã tắt tiếng trình duyệt Playwright (đăng nhập, tải, đăng).'
-            : '🔊 Đã bật tiếng trình duyệt Playwright.'
+            ? '🔇 Đã tắt tiếng trình duyệt Camoufox (đăng nhập, tải, đăng).'
+            : '🔊 Đã bật tiếng trình duyệt Camoufox.'
     );
 }
 

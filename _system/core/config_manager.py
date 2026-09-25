@@ -65,7 +65,7 @@ DEFAULT_CONFIG = {
     "browser": {
         "headless": True,
         "mute_audio": True,
-        "user_data_dir": "browser_profiles/default"
+        "user_data_dir": "browser_profiles/camoufox"
     },
         "schedule_publish": {
             "enabled": True,

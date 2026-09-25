@@ -40,6 +40,8 @@ cmd = [
     "--hidden-import", "automation.posters.tiktok_poster",
     "--hidden-import", "core.email_reporter",
     "--hidden-import", "core.schedule_helper",
+    "--collect-all", "camoufox",
+    "--collect-all", "browserforge",
     "--clean",
 ]
 

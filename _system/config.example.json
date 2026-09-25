@@ -54,7 +54,7 @@
   "browser": {
     "headless": true,
     "mute_audio": true,
-    "user_data_dir": "browser_profiles/default"
+    "user_data_dir": "browser_profiles/camoufox"
   },
   "schedule_publish": {
     "enabled": true,
