@@ -42,6 +42,8 @@ cmd = [
     "--hidden-import", "core.schedule_helper",
     "--collect-all", "camoufox",
     "--collect-all", "browserforge",
+    "--collect-all", "apify_fingerprint_datapoints",
+    "--collect-all", "language_tags",
     "--clean",
 ]
 
