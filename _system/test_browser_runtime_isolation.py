@@ -59,6 +59,7 @@ class BrowserRuntimeIsolationTests(unittest.TestCase):
     def test_browser_engine_never_uses_global_launch_path(self):
         source = (Path(__file__).resolve().parent / "automation" / "browser_engine.py").read_text(encoding="utf-8")
         self.assertIn("executable_path=executable", source)
+        self.assertIn("ff_version=CAMOUFOX_FIREFOX_MAJOR", source)
         self.assertNotIn("launch_path(", source)
 
     def test_camoufox_platform_cache_is_forced_under_app_runtime(self):

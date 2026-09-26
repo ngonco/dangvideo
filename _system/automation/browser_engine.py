@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from playwright.async_api import BrowserContext, Page
 from core.config_manager import config_mgr, DOWNLOADS_DIR, PROFILES_DIR
 from core.logger import logger
-from core.browser_runtime import ProfileProcessLock, browser_runtime
+from core.browser_runtime import CAMOUFOX_FIREFOX_MAJOR, ProfileProcessLock, browser_runtime
 from camoufox.async_api import AsyncCamoufox
 
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
@@ -122,6 +122,8 @@ class BrowserEngine:
                 persistent_context=True,
                 user_data_dir=user_data_dir,
                 executable_path=executable,
+                ff_version=CAMOUFOX_FIREFOX_MAJOR,
+                i_know_what_im_doing=True,
                 env=browser_runtime.launch_environment(),
                 **browser_runtime.launch_addon_options(),
                 os="windows",
