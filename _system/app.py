@@ -30,6 +30,22 @@ os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fix Windows asyncio Proactor 10054 noise on connection reset
+    try:
+        loop = asyncio.get_running_loop()
+        orig_handler = loop.get_exception_handler()
+        def win_asyncio_exception_handler(loop, context):
+            msg = str(context.get("exception", "") or context.get("message", ""))
+            if "10054" in msg or "connection_lost" in msg or "ConnectionResetError" in msg:
+                return
+            if orig_handler:
+                orig_handler(loop, context)
+            else:
+                loop.default_exception_handler(context)
+        loop.set_exception_handler(win_asyncio_exception_handler)
+    except Exception:
+        pass
+
     # Startup: Start scheduler if auto mode enabled
     logger.info("Khởi động hệ thống Auto Đăng Video...", "SERVER")
     task_scheduler.start()
@@ -522,7 +538,9 @@ async def websocket_logs(websocket: WebSocket):
         while True:
             log_entry = await queue.get()
             await websocket.send_json(log_entry)
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, ConnectionResetError):
+        pass
+    except Exception:
         pass
     finally:
         logger.unsubscribe(queue)
