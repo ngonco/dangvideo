@@ -32,6 +32,9 @@ config.json
 Tu_dong_dang_video.exe
 _system/Tu_dong_dang_video.exe
 _system/dist/
+_system/.runtime/
+*.installing-*
+.setup.lock
 
 # Local SQLite Database (Local post history)
 data.db

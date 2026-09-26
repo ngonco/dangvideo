@@ -38,18 +38,13 @@ if (Test-Path $SourceFolder) {
 Remove-Item -Path $TempZip -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $ExtractTemp -Recurse -Force -ErrorAction SilentlyContinue
 
-# 3. Cài đặt thư viện Python & Camoufox
-Write-Host "[3/5] Đang cài đặt thư viện và trình duyệt Camoufox..." -ForegroundColor Green
-Set-Location -Path $InstallDir
-
-if (Get-Command python -ErrorAction SilentlyContinue) {
-    Write-Host "-> Đang cài đặt các thư viện Python..." -ForegroundColor Gray
-    python -m pip install --upgrade pip --quiet
-    python -m pip install -r requirements.txt --quiet
-    python -m camoufox fetch
-} else {
-    Write-Host "-> Chưa phát hiện Python trên máy. Sẽ chạy script install.bat khi khởi động." -ForegroundColor Yellow
-}
+# 3. Cài runtime riêng; không dùng Python/Camoufox toàn cục
+Write-Host "[3/5] Đang cài runtime riêng cho Auto Đăng Video..." -ForegroundColor Green
+$SystemDir = Join-Path $InstallDir "_system"
+$Bootstrap = Join-Path $SystemDir "bootstrap.ps1"
+if (-not (Test-Path $Bootstrap)) { throw "Khong tim thay _system/bootstrap.ps1" }
+& powershell -NoProfile -ExecutionPolicy Bypass -File $Bootstrap -SetupOnly
+if ($LASTEXITCODE -ne 0) { throw "Khong cai duoc runtime rieng Auto Dang Video." }
 
 # 4. Tạo Shortcut trên Desktop & Thư mục Startup (Khởi động cùng Windows)
 Write-Host "[4/5] Đang tạo Shortcut trên Desktop & Khởi động cùng Windows..." -ForegroundColor Green
@@ -58,16 +53,16 @@ $WshShell = New-Object -ComObject WScript.Shell
 # Desktop Shortcut
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 $DesktopShortcut = $WshShell.CreateShortcut((Join-Path $DesktopPath "Auto Video Pro.lnk"))
-$DesktopShortcut.TargetPath = (Join-Path $InstallDir "run.bat")
-$DesktopShortcut.WorkingDirectory = $InstallDir
+$DesktopShortcut.TargetPath = (Join-Path $SystemDir "install.bat")
+$DesktopShortcut.WorkingDirectory = $SystemDir
 $DesktopShortcut.Description = "Auto Video Pro - Tự động tải & đăng video"
 $DesktopShortcut.Save()
 
 # Startup Shortcut (Chạy ngầm khi mở máy tính)
 $StartupPath = [Environment]::GetFolderPath("Startup")
 $StartupShortcut = $WshShell.CreateShortcut((Join-Path $StartupPath "AutoVideoPro.lnk"))
-$StartupTarget = Join-Path $InstallDir "run_hidden.vbs"
-if (-not (Test-Path $StartupTarget)) { $StartupTarget = Join-Path $InstallDir "run.bat" }
+$StartupTarget = Join-Path $SystemDir "run_hidden.vbs"
+if (-not (Test-Path $StartupTarget)) { $StartupTarget = Join-Path $SystemDir "install.bat" }
 $StartupShortcut.TargetPath = $StartupTarget
 $StartupShortcut.WorkingDirectory = $InstallDir
 $StartupShortcut.Description = "Auto Video Pro Startup"
@@ -85,4 +80,4 @@ Write-Host "🖥️ Shortcut Desktop: $DesktopPath\Auto Video Pro.lnk" -Foregrou
 Write-Host "🚀 Tự khởi động cùng Windows: ĐÃ BẬT" -ForegroundColor White
 Write-Host ""
 
-Start-Process (Join-Path $InstallDir "run.bat")
+Start-Process (Join-Path $SystemDir "install.bat")

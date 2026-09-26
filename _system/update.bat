@@ -27,17 +27,11 @@ if %errorlevel% neq 0 (
     git reset --hard origin/main
 )
 
-:: 3. Cập nhật thư viện Python nếu có file requirements.txt
+:: 3. Cập nhật runtime Python riêng theo lockfile
 echo.
 echo [2/3] Đang kiểm tra và cập nhật các gói thư viện Python...
-if exist "venv\Scripts\activate.bat" (
-    call venv\Scripts\activate.bat
-    python -m pip install --upgrade pip >nul 2>nul
-    pip install -r requirements.txt
-    playwright install chromium
-) else (
-    echo [THÔNG BÁO] Thư mục venv chưa được khởi tạo. Vui lòng chạy install.bat trước.
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0bootstrap.ps1" -SetupOnly
+if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo.
 echo ========================================================

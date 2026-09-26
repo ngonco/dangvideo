@@ -104,6 +104,8 @@ Auto_Dang_video/
     ├── run.bat
     ├── backup_to_github.bat   # Chỉ đẩy mã nguồn (không .exe); ưu tiên dùng publish_github_release
     ├── requirements.txt
+    ├── requirements.lock       # Dependency runtime riêng đã khóa phiên bản
+    ├── .runtime/auto-dang-video/ # Python/browser/cache/temp riêng — gitignore
     ├── test_full_suite.py
     ├── test_fb_retry.py / test_tt_retry.py / test_ig_retry.py
     │
@@ -116,7 +118,8 @@ Auto_Dang_video/
     │   └── autostart_manager.py
     │
     ├── automation/
-    │   ├── browser_engine.py  # Persistent Camoufox (Firefox Anti-detect), mute-audio, humanize
+    │   ├── browser_engine.py  # Persistent Camoufox với executable/profile riêng
+    │   ├── browser_runtime.py # Cài/kiểm SHA, manifest, owner, mutex app/profile
     │   ├── hashtag_manager.py   # Kho đạo lý + gộp hashtag AI khi tải
     │   ├── hatbuinho_crawler.py
     │   ├── ai_fallback.py      # Hashtag AI khi tải; recover UI khi lỗi
@@ -250,6 +253,7 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 | `GET` | `/` | Dashboard |
 | `GET` | `/media/{filename}` | File video trong `downloads/` |
 | `GET` | `/api/system/version` | Phiên bản |
+| `GET` | `/api/system/browser-runtime` | Trạng thái `installing|ready|error`, app/version và đường dẫn rút gọn; không trả cookie |
 | `GET` | `/api/stats` | Số liệu tổng |
 | `GET` | `/api/videos` | Danh sách video kho |
 | `GET` | `/api/videos/{video_id}/history` | Lịch sử theo 1 video |
@@ -367,7 +371,7 @@ Một trang cuộn duy nhất:
 | :--- | :--- | :--- |
 | `stdout` None / `isatty` | PyInstaller `--noconsole` | `DummyWriter` trong `tray_app.py` / `logger.py` |
 | `signal only works in main thread` | Uvicorn trong thread | `install_signal_handlers = lambda: None` |
-| Profile trình duyệt bị khóa | Tiến trình Camoufox cũ còn treo giữ `browser_profiles/camoufox` | Tắt tiến trình camoufox.exe trong Task Manager |
+| Profile trình duyệt bị khóa | Một phiên Auto Đăng Video khác đang giữ đúng `browser_profiles/camoufox` | Đóng phiên Auto Đăng Video cũ; không tắt Camoufox theo tên vì có thể thuộc Scan Viral |
 | HatBuiNho không thấy video | Overlay Đã đọc / chưa bấm Video | `#btn_view_history` rồi `#history_tab_done` |
 | TikTok draft / Continue to post | Bản nháp hoặc hộp xác nhận lịch | Discard; trong Continue to post bấm Post now (xác nhận lịch) |
 | Facebook đăng tường / kẹt lịch | Sai composer; calendar che nút | Prodash Reel; helper text; Schedule footer; Copy link |
@@ -377,3 +381,11 @@ Một trang cuộn duy nhất:
 | User không có .exe trong git clone | `.exe` không nằm trong git | Tải https://github.com/ngonco/dangvideo/releases/latest |
 
 Tài liệu này khớp mã nguồn hiện tại: native schedule, Instagram permalink thanh địa chỉ, hashtag AI khi tải, phát hành `.exe` qua GitHub Releases.
+
+---
+
+## 12. NHẬT KÝ THAY ĐỔI SYSTEM MAP
+
+| Ngày | Tác giả | Thay đổi | Lý do |
+| :--- | :--- | :--- | :--- |
+| 2026-09-26 | Codex | Tách runtime Auto Đăng Video sang `_system/.runtime/auto-dang-video/`; thêm Python Embedded/lockfile, Camoufox browser/cache/temp riêng, cài staging + SHA-256, `runtime.json`, `owner.json`, mutex theo app/profile, executable tuyệt đối, API trạng thái/503, UI báo lỗi cài đặt và mọi launcher/build/update/publish dùng runtime riêng. Ép `platformdirs` về cache app-local trước lần import Camoufox đầu tiên vì Windows Known Folder không tuân theo `LOCALAPPDATA`. Bản portable nhúng runtime cũ được chuyển sang onefile tự cài browser lần đầu; release dùng artifact mới trong `_system` nên vẫn phát hành an toàn khi bản EXE gốc đang mở và bị Windows khóa. | Cho phép chạy đồng thời với Scan Viral mà không dùng cache/binary/mutex chung, không kill chéo browser, không commit gói gần 1 GB, không dừng workflow đang chạy để build và vẫn giữ nguyên cookie ở `_system/browser_profiles/camoufox/`. |

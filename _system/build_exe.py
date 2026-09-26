@@ -7,6 +7,27 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 os.chdir(HERE)
+BUILD_ROOT = os.path.abspath(os.environ.get("AUTO_BUILD_ROOT", HERE))
+os.makedirs(BUILD_ROOT, exist_ok=True)
+SPEC_DIR = os.path.join(BUILD_ROOT, "spec")
+WORK_DIR = os.path.join(BUILD_ROOT, "build")
+DIST_DIR = os.path.join(BUILD_ROOT, "dist")
+for directory in (SPEC_DIR, WORK_DIR, DIST_DIR):
+    os.makedirs(directory, exist_ok=True)
+
+RUNTIME_PYTHON = os.path.join(HERE, ".runtime", "auto-dang-video", "python", "python.exe")
+if os.path.isfile(RUNTIME_PYTHON) and os.path.normcase(sys.executable) != os.path.normcase(RUNTIME_PYTHON):
+    raise SystemExit(subprocess.call([RUNTIME_PYTHON, os.path.abspath(__file__)]))
+if not os.path.isfile(RUNTIME_PYTHON):
+    raise SystemExit("Chua co Python runtime rieng. Hay chay bootstrap.ps1 truoc khi build.")
+
+from importlib.metadata import version
+
+EXPECTED = {"camoufox": "0.5.6", "playwright": "1.62.0", "pyinstaller": "6.14.2"}
+for package, expected in EXPECTED.items():
+    actual = version(package)
+    if actual != expected:
+        raise SystemExit(f"Sai version {package}: can {expected}, dang co {actual}")
 
 EXCLUDES = [
     "torch", "torchaudio", "torchvision", "tensorflow", "keras",
@@ -22,9 +43,12 @@ cmd = [
     "--noconsole",
     "--onefile",
     "--name", "Tu_dong_dang_video",
-    "--add-data", "static;static",
-    "--add-data", "config.example.json;.",
-    "--add-data", "VERSION;.",
+    "--specpath", SPEC_DIR,
+    "--workpath", WORK_DIR,
+    "--distpath", DIST_DIR,
+    "--add-data", os.path.join(HERE, "static") + ";static",
+    "--add-data", os.path.join(HERE, "config.example.json") + ";.",
+    "--add-data", os.path.join(HERE, "VERSION") + ";.",
     "--hidden-import", "uvicorn.logging",
     "--hidden-import", "uvicorn.loops.auto",
     "--hidden-import", "uvicorn.protocols.http.auto",
@@ -51,18 +75,29 @@ cmd = [
 for mod in EXCLUDES:
     cmd.extend(["--exclude-module", mod])
 
-cmd.append("tray_app.py")
+cmd.append(os.path.join(HERE, "tray_app.py"))
 
 print(" ".join(cmd))
 rc = subprocess.call(cmd)
 if rc != 0:
     sys.exit(rc)
 
-src = os.path.join(HERE, "dist", "Tu_dong_dang_video.exe")
+src = os.path.join(DIST_DIR, "Tu_dong_dang_video.exe")
 if not os.path.isfile(src):
     print("Khong tim thay", src)
     sys.exit(1)
 
-shutil.copy2(src, os.path.join(HERE, "Tu_dong_dang_video.exe"))
-shutil.copy2(src, os.path.join(ROOT, "Tu_dong_dang_video.exe"))
-print("OK:", os.path.join(ROOT, "Tu_dong_dang_video.exe"))
+if os.path.normcase(BUILD_ROOT) == os.path.normcase(HERE):
+    release_artifact = os.path.join(HERE, "Tu_dong_dang_video.exe")
+    shutil.copy2(src, release_artifact)
+    root_copy = os.path.join(ROOT, "Tu_dong_dang_video.exe")
+    try:
+        shutil.copy2(src, root_copy)
+        print("OK:", root_copy)
+    except PermissionError:
+        # The installed onefile app may currently be running and Windows locks
+        # its executable.  Publishing uses release_artifact, so do not stop a
+        # live user workflow just to refresh this ignored convenience copy.
+        print("CANH BAO: EXE goc dang duoc su dung; giu artifact moi tai", release_artifact)
+else:
+    print("OK test build:", src)

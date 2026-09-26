@@ -1,52 +1,36 @@
+param([switch]$SetupOnly)
+
 $ErrorActionPreference = "Stop"
+
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') }
+        finally { $sha.Dispose() }
+    }
+    finally { $stream.Dispose() }
+}
 
 $AppDir = $PSScriptRoot
 Set-Location -Path $AppDir
 
-# 1. Xac dinh trinh thuc thi Python
-$PyExe = $null
+# 1. Runtime Python rieng; khong chay server bang Python he thong
+$RuntimeRoot = Join-Path $AppDir ".runtime\auto-dang-video"
+$EmbedDir = Join-Path $RuntimeRoot "python"
+$PyExe = Join-Path $EmbedDir "python.exe"
+$TempDir = Join-Path $RuntimeRoot "temp"
+New-Item -ItemType Directory -Path $RuntimeRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+$env:TEMP = $TempDir
+$env:TMP = $TempDir
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $RuntimeRoot "playwright"
+Remove-Item Env:PIP_NO_INDEX -ErrorAction SilentlyContinue
 
-# Kiem tra Python Embedded
-$EmbedPy = Join-Path $AppDir "python_embed\python.exe"
-if (Test-Path $EmbedPy) {
-    $PyExe = $EmbedPy
-    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $AppDir "python_embed\browsers"
-}
-
-# Kiem tra venv
-if (-not $PyExe) {
-    $VenvPy = Join-Path $AppDir "venv\Scripts\python.exe"
-    if (Test-Path $VenvPy) {
-        $PyExe = $VenvPy
-    }
-}
-
-# Kiem tra Python he thong
-if (-not $PyExe) {
-    $SysPy = Get-Command python -ErrorAction SilentlyContinue
-    if ($SysPy) {
-        try {
-            & python -c "import sys" 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "[MOI TRUONG] Phat hien Python he thong. Khoi tao venv..." -ForegroundColor Green
-                & python -m venv (Join-Path $AppDir "venv")
-                $VenvPy = Join-Path $AppDir "venv\Scripts\python.exe"
-                if (Test-Path $VenvPy) {
-                    $PyExe = $VenvPy
-                } else {
-                    $PyExe = "python"
-                }
-            }
-        } catch {}
-    }
-}
-
-# Neu may chua co Python: Tu dong tai Python 3.11 Embedded
-if (-not $PyExe) {
-    Write-Host "[MOI TRUONG] May tinh chua co Python. Dang tu dong tai Python 3.11 Portable..." -ForegroundColor Yellow
-    $EmbedDir = Join-Path $AppDir "python_embed"
+if (-not (Test-Path $PyExe)) {
+    Write-Host "[MOI TRUONG] Dang cai Python Embedded 3.11.9 rieng cho Auto Dang Video..." -ForegroundColor Yellow
     New-Item -ItemType Directory -Path $EmbedDir -Force | Out-Null
-    $ZipPath = Join-Path $AppDir "python_embed.zip"
+    $ZipPath = Join-Path $RuntimeRoot "python_embed.zip"
     
     Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" -OutFile $ZipPath -UseBasicParsing
     Expand-Archive -Path $ZipPath -DestinationPath $EmbedDir -Force
@@ -55,52 +39,60 @@ if (-not $PyExe) {
     # Cau hinh pth de ho tro site-packages va pip
     $PthFile = Join-Path $EmbedDir "python311._pth"
     if (Test-Path $PthFile) {
-        (Get-Content $PthFile) -replace '#import site', 'import site' | Set-Content $PthFile
+        $PthLines = (Get-Content $PthFile) -replace '#import site', 'import site'
+        if ($PthLines -notcontains '..\..\..') {
+            $PthLines = @($PthLines[0], '.', '..\..\..') + $PthLines[2..($PthLines.Length - 1)]
+        }
+        $PthLines | Set-Content $PthFile
     }
     
     # Cai dat pip
-    $GetPip = Join-Path $AppDir "get-pip.py"
+    $GetPip = Join-Path $RuntimeRoot "get-pip.py"
     Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $GetPip -UseBasicParsing
     & (Join-Path $EmbedDir "python.exe") $GetPip --no-warn-script-location
     Remove-Item $GetPip -Force -ErrorAction SilentlyContinue
     
-    $PyExe = Join-Path $EmbedDir "python.exe"
-    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $EmbedDir "browsers"
+}
+
+# Python Embedded imports only paths explicitly listed in python311._pth.
+$PthFile = Join-Path $EmbedDir "python311._pth"
+$PthLines = Get-Content $PthFile
+if ($PthLines -notcontains '..\..\..') {
+    $PthLines = @($PthLines[0], '.', '..\..\..') + $PthLines[2..($PthLines.Length - 1)]
+    $PthLines | Set-Content $PthFile
 }
 
 Write-Host "[MOI TRUONG] Su dung Python: $PyExe" -ForegroundColor Cyan
 
 # 2. Kiem tra va cai dat thu vien
-$ReqFile = Join-Path $AppDir "requirements.txt"
-$depsOk = $false
-try {
-    & $PyExe -c "import fastapi, playwright, apscheduler, uvicorn" 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        $depsOk = $true
-    }
-} catch {
-    $depsOk = $false
-}
-
-if (-not $depsOk) {
+$ReqFile = Join-Path $AppDir "requirements.lock"
+$StampFile = Join-Path $RuntimeRoot "python-runtime.sha256"
+$RequiredHash = Get-Sha256Hex $ReqFile
+$InstalledHash = if (Test-Path $StampFile) { (Get-Content -LiteralPath $StampFile -Raw).Trim() } else { "" }
+if ($InstalledHash -ne $RequiredHash) {
     Write-Host ""
     Write-Host "=================================================================" -ForegroundColor Green
-    Write-Host "  📦 DANG CAI DAT CAC THU VIEN LAN DAU (FastAPI, Camoufox...)" -ForegroundColor Green
-    Write-Host "  ⏳ Qua trinh nay chi dien ra mot lan duy nhat (~30 giay)..." -ForegroundColor Yellow
+    Write-Host "  DANG CAI DAT CAC THU VIEN LAN DAU (FastAPI, Camoufox...)" -ForegroundColor Green
+    Write-Host "  Qua trinh nay chi dien ra mot lan duy nhat..." -ForegroundColor Yellow
     Write-Host "=================================================================" -ForegroundColor Green
     Write-Host ""
     & $PyExe -m pip install --upgrade pip --no-warn-script-location --quiet
     & $PyExe -m pip install --no-warn-script-location -r $ReqFile
-    Write-Host "[CAI DAT] Dang tai trinh duyet Camoufox Anti-detect..." -ForegroundColor Green
-    & $PyExe -m camoufox fetch
+    if ($LASTEXITCODE -ne 0) { throw "Khong cai duoc dependency runtime rieng." }
+    Set-Content -LiteralPath $StampFile -Value $RequiredHash -NoNewline
     Write-Host "[CAI DAT] Hoan tat thiet lap moi truong 100%!" -ForegroundColor Green
 }
 
 # 3. Mo Web Dashboard va chay Server
+if ($SetupOnly) {
+    Write-Host "[Runtime] San sang: $PyExe" -ForegroundColor Green
+    exit 0
+}
+
 Write-Host ""
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "  🌐 GIAO DIEN DANG MO TAI: http://127.0.0.1:8000" -ForegroundColor Yellow
-Write-Host "  💡 Nhan Ctrl + C de dung may chu khi khong su dung." -ForegroundColor Cyan
+Write-Host "  GIAO DIEN DANG MO TAI: http://127.0.0.1:8000" -ForegroundColor Yellow
+Write-Host "  Nhan Ctrl + C de dung may chu khi khong su dung." -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host ""
 

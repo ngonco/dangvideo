@@ -1,0 +1,16 @@
+playwright==1.62.0
+camoufox==0.5.6
+fastapi==0.135.1
+uvicorn[standard]==0.42.0
+apscheduler==3.11.2
+pydantic==2.12.5
+websockets==15.0.1
+requests==2.32.5
+python-multipart==0.0.22
+aiofiles==24.1.0
+pystray==0.19.4
+pillow==12.1.1
+pyinstaller==6.14.2
+openai==2.3.0
+python-dotenv==1.2.2
+psutil==7.0.0

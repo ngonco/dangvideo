@@ -181,7 +181,9 @@ def build_exe() -> str:
     rc = subprocess.call([sys.executable, os.path.join(HERE, "build_exe.py")], cwd=HERE)
     if rc != 0:
         die(f"build_exe.py that bai (exit {rc})")
-    exe = os.path.join(ROOT, EXE_NAME)
+    # The root convenience copy can be locked while the installed onefile app
+    # is running. build_exe.py always refreshes this private release artifact.
+    exe = os.path.join(HERE, EXE_NAME)
     if not os.path.isfile(exe):
         die("Khong tim thay " + exe)
     size_mb = os.path.getsize(exe) / (1024 * 1024)

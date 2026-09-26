@@ -3,9 +3,10 @@ import sys
 import asyncio
 from typing import Optional, Dict, Any
 from playwright.async_api import BrowserContext, Page
-from camoufox.async_api import AsyncCamoufox
 from core.config_manager import config_mgr, DOWNLOADS_DIR, PROFILES_DIR
 from core.logger import logger
+from core.browser_runtime import ProfileProcessLock, browser_runtime
+from camoufox.async_api import AsyncCamoufox
 
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 os.makedirs(PROFILES_DIR, exist_ok=True)
@@ -16,25 +17,16 @@ os.makedirs(CAMOUFOX_PROFILE_DIR, exist_ok=True)
 
 
 def ensure_camoufox_installed() -> Optional[str]:
-    """Kiểm tra và tự động tải binary Camoufox nếu máy chưa có sẵn."""
+    """Bảo đảm binary Camoufox riêng của Auto Đăng Video đã sẵn sàng."""
     try:
-        from camoufox.pkgman import launch_path, CamoufoxFetcher
-        try:
-            p = launch_path()
-            if p and os.path.exists(p):
-                return str(p)
-        except Exception:
-            pass
-
-        logger.info("Chưa tìm thấy binary trình duyệt Camoufox. Đang tự động tải về (chỉ 1 lần duy nhất)...", "BROWSER")
-        fetcher = CamoufoxFetcher()
-        fetcher.install()
-        p = launch_path()
-        logger.success(f"Đã cài đặt thành công Camoufox Anti-detect: {p}", "BROWSER")
-        return str(p)
+        if not browser_runtime.is_ready:
+            logger.info("Đang cài Camoufox riêng cho Auto Đăng Video (chỉ một lần)...", "BROWSER")
+        path = browser_runtime.ensure_ready()
+        logger.success(f"Camoufox riêng đã sẵn sàng: {path}", "BROWSER")
+        return str(path)
     except Exception as e:
-        logger.error(f"Lỗi khi kiểm tra hoặc tải Camoufox binary: {e}", "BROWSER")
-        return None
+        logger.error(f"Lỗi khi chuẩn bị Camoufox riêng: {e}", "BROWSER")
+        raise
 
 
 def _mute_audio_enabled() -> bool:
@@ -55,35 +47,14 @@ def cleanup_profile_locks(profile_dir: str):
     if not os.path.exists(lock_path):
         return
 
-    # Thử xóa trực tiếp nếu tiến trình cũ đã thoát
+    # Không bao giờ kill theo tên process. Chỉ dọn lock nếu executable+profile
+    # riêng của app không còn tiến trình sống.
+    if browser_runtime.owned_browser_pids():
+        return
     try:
         os.remove(lock_path)
-        return
-    except Exception:
-        pass
-
-    # Nếu file lock đang bị giữ, tìm chính xác PID của Camoufox đang dùng profile này
-    try:
-        import psutil
-        norm_target = os.path.normpath(profile_dir).lower()
-        for p in psutil.process_iter(['name', 'cmdline']):
-            try:
-                name = (p.info['name'] or '').lower()
-                if 'camoufox' in name:
-                    cmdline = " ".join(p.info['cmdline'] or []).lower()
-                    if norm_target in cmdline:
-                        p.kill()
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    # Thử xóa lại lock_path sau khi tắt tiến trình mồ côi của riêng profile này
-    try:
-        if os.path.exists(lock_path):
-            os.remove(lock_path)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(f"Không thể dọn parent.lock đã xác minh của Auto Đăng Video: {exc}", "BROWSER")
 
 
 class BrowserEngine:
@@ -93,6 +64,7 @@ class BrowserEngine:
         self.is_headless: Optional[bool] = None
         self.is_muted: Optional[bool] = None
         self._lock = asyncio.Lock()
+        self._process_lock = ProfileProcessLock(browser_runtime.app_id, CAMOUFOX_PROFILE_DIR)
 
     async def get_context(self, headless: Optional[bool] = None, profile_name: str = "camoufox") -> BrowserContext:
         async with self._lock:
@@ -116,7 +88,13 @@ class BrowserEngine:
                 except Exception:
                     self.context = None
 
-            ensure_camoufox_installed()
+            if not await asyncio.to_thread(self._process_lock.acquire):
+                raise RuntimeError("Profile Camoufox của Auto Đăng Video đang được một tiến trình khác của cùng app sử dụng.")
+            try:
+                executable = await asyncio.to_thread(ensure_camoufox_installed)
+            except Exception:
+                self._process_lock.release()
+                raise
 
             user_data_dir = os.path.join(PROFILES_DIR, profile_name)
             os.makedirs(user_data_dir, exist_ok=True)
@@ -143,14 +121,29 @@ class BrowserEngine:
                 headless=headless,
                 persistent_context=True,
                 user_data_dir=user_data_dir,
+                executable_path=executable,
+                env=browser_runtime.launch_environment(),
+                **browser_runtime.launch_addon_options(),
                 os="windows",
                 humanize=0.8,
                 window=(1400, 900),
                 firefox_user_prefs=user_prefs,
             )
-            self.context = await self.cm.__aenter__()
+            try:
+                self.context = await self.cm.__aenter__()
+            except Exception:
+                self.cm = None
+                self._process_lock.release()
+                raise
             self.is_headless = headless
             self.is_muted = mute_audio
+            pids = browser_runtime.owned_browser_pids()
+            browser_runtime.record_owner(pids)
+            logger.info(
+                f"Camoufox mở app_id={browser_runtime.app_id} version=official/152.0.4-beta.30 executable={executable} "
+                f"profile={user_data_dir} pids={pids}",
+                "BROWSER",
+            )
             return self.context
 
     async def get_page(self, context: Optional[BrowserContext] = None) -> Page:
@@ -291,6 +284,7 @@ class BrowserEngine:
             logger.error(f"Lỗi khi mở trang đăng nhập {platform.upper()}: {e}", "BROWSER")
 
     async def _close_context_unlocked(self):
+        had_browser = bool(self.cm or self.context)
         if self.cm:
             try:
                 await self.cm.__aexit__(None, None, None)
@@ -306,6 +300,14 @@ class BrowserEngine:
             self.context = None
         self.is_headless = None
         self.is_muted = None
+        browser_runtime.clear_owner()
+        self._process_lock.release()
+        if had_browser:
+            logger.info(
+                f"Camoufox đóng app_id={browser_runtime.app_id} version=official/152.0.4-beta.30 "
+                "reason=session_finished",
+                "BROWSER",
+            )
 
         # Đợi giải phóng lock và dọn parent.lock nếu còn sót của riêng profile Auto_Dang_video
         await asyncio.sleep(0.5)

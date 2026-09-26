@@ -15,6 +15,7 @@ from core.logger import logger
 from core.database import db
 from core.config_manager import config_mgr, ROOT_DIR, SYSTEM_DIR, DOWNLOADS_DIR, get_app_version
 from core.autostart_manager import autostart_mgr
+from core.browser_runtime import browser_runtime
 from automation.workflow_manager import workflow_mgr
 from scheduler.task_scheduler import task_scheduler
 
@@ -27,6 +28,42 @@ if not os.path.exists(STATIC_DIR):
 
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+_browser_runtime_install_task = None
+
+
+async def _install_browser_runtime():
+    try:
+        logger.info("Đang chuẩn bị Camoufox riêng cho Auto Đăng Video...", "BROWSER")
+        await asyncio.to_thread(browser_runtime.ensure_ready)
+        logger.success("Camoufox riêng của Auto Đăng Video đã sẵn sàng.", "BROWSER")
+    except Exception as exc:
+        logger.error(f"Không chuẩn bị được Camoufox riêng: {exc}", "BROWSER")
+
+
+def _start_browser_runtime_install():
+    global _browser_runtime_install_task
+    if browser_runtime.is_ready:
+        return None
+    if _browser_runtime_install_task is None or _browser_runtime_install_task.done():
+        _browser_runtime_install_task = asyncio.create_task(_install_browser_runtime())
+    return _browser_runtime_install_task
+
+
+async def require_browser_runtime():
+    if browser_runtime.is_ready:
+        return
+    _start_browser_runtime_install()
+    status = browser_runtime.status()
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "browser_runtime_not_ready",
+            "message": "Camoufox riêng đang được cài đặt. Vui lòng theo dõi Nhật ký và thử lại.",
+            "runtime_status": status.get("status"),
+            "error": status.get("error"),
+        },
+    )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,6 +85,7 @@ async def lifespan(app: FastAPI):
 
     # Startup: Start scheduler if auto mode enabled
     logger.info("Khởi động hệ thống Auto Đăng Video...", "SERVER")
+    _start_browser_runtime_install()
     task_scheduler.start()
     yield
     # Shutdown: Stop scheduler & close browser
@@ -169,6 +207,7 @@ async def update_config(req: ConfigUpdateRequest):
 
 @app.get("/api/facebook/pages")
 async def get_facebook_pages():
+    await require_browser_runtime()
     """Quét danh sách các Fanpage mà tài khoản Facebook đang quản trị."""
     if workflow_mgr.is_busy:
         raise HTTPException(status_code=400, detail="Hệ thống đang bận thực hiện tác vụ khác.")
@@ -182,6 +221,7 @@ async def get_facebook_pages():
 
 @app.post("/api/action/scan")
 async def trigger_scan(req: ScanRequest, background_tasks: BackgroundTasks):
+    await require_browser_runtime()
     if workflow_mgr.is_busy:
         raise HTTPException(status_code=400, detail="Hệ thống đang bận thực hiện tác vụ khác.")
     
@@ -191,6 +231,7 @@ async def trigger_scan(req: ScanRequest, background_tasks: BackgroundTasks):
 
 @app.post("/api/action/post")
 async def trigger_post(req: PostVideoRequest, background_tasks: BackgroundTasks):
+    await require_browser_runtime()
     if workflow_mgr.is_busy:
         raise HTTPException(status_code=400, detail="Hệ thống đang bận thực hiện tác vụ khác.")
     
@@ -203,6 +244,7 @@ async def trigger_post(req: PostVideoRequest, background_tasks: BackgroundTasks)
 
 @app.post("/api/action/run-workflow")
 async def trigger_run_workflow(req: Optional[RunWorkflowRequest] = None):
+    await require_browser_runtime()
     if workflow_mgr.is_busy:
         return {"success": False, "message": "Hệ thống đang bận thực hiện tác vụ khác. Vui lòng đợi..."}
 
@@ -274,6 +316,7 @@ async def get_selection_list(limit: int = 100):
 
 @app.post("/api/action/repost")
 async def repost_video(req: RepostVideoRequest):
+    await require_browser_runtime()
     """Đăng lại một video cụ thể theo khung giờ hẹn do người dùng chọn."""
     if workflow_mgr.is_busy:
         return {"success": False, "message": "Hệ thống đang bận thực hiện tác vụ khác. Vui lòng đợi..."}
@@ -314,6 +357,7 @@ async def trigger_cleanup():
 
 @app.post("/api/action/open-login")
 async def open_login(req: OpenLoginRequest, background_tasks: BackgroundTasks):
+    await require_browser_runtime()
     background_tasks.add_task(workflow_mgr.open_login_browser, req.url)
     return {"success": True, "message": f"Đang mở trình duyệt đăng nhập: {req.url}"}
 
@@ -438,6 +482,7 @@ async def download_log_file():
 
 @app.post("/api/action/batch-download-queue")
 async def batch_download_queue():
+    await require_browser_runtime()
     from automation.workflow_manager import workflow_mgr
     res = await workflow_mgr.batch_download_to_queue(max_items=50)
     return res
@@ -448,8 +493,14 @@ async def get_accounts_status():
     statuses = await browser_engine.get_login_statuses()
     return {"success": True, "statuses": statuses}
 
+
+@app.get("/api/system/browser-runtime")
+async def get_browser_runtime_status():
+    return browser_runtime.status()
+
 @app.post("/api/browser/open-login/{platform}")
 async def open_browser_login(platform: str):
+    await require_browser_runtime()
     from automation.browser_engine import browser_engine
     try:
         # Run login opener without blocking HTTP request

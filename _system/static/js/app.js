@@ -471,6 +471,12 @@ async function fetchQueueSummary() {
     }
 }
 
+function apiErrorMessage(data, fallback = 'Không thể thực hiện tác vụ.') {
+    const detail = data && data.detail ? data.detail : data;
+    if (detail && typeof detail === 'object') return detail.message || detail.error || fallback;
+    return detail || fallback;
+}
+
 async function runBatchQueueDownload() {
     const btn = document.getElementById('btnBatchQueue');
     const progressBox = document.getElementById('workflowProgressBox');
@@ -494,6 +500,10 @@ async function runBatchQueueDownload() {
     try {
         const res = await fetch('/api/action/batch-download-queue', { method: 'POST' });
         const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(apiErrorMessage(data, `Lỗi máy chủ (${res.status})`));
+        }
 
         if (data.success) {
             progressPercent.innerText = '100%';
@@ -738,11 +748,10 @@ async function repostSelectedVideo(videoId, scheduleTime, targetDate, title) {
                 target_date: targetDate
             })
         });
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(`Lỗi máy chủ (${res.status}): ${errText.slice(0, 150)}`);
-        }
         const data = await res.json();
+        if (!res.ok) {
+            throw new Error(apiErrorMessage(data, `Lỗi máy chủ (${res.status})`));
+        }
 
         if (data.success) {
             if (progressPercent) progressPercent.innerText = '100%';
@@ -956,11 +965,14 @@ async function openLoginBrowser(platform) {
     try {
         const res = await fetch(`/api/browser/open-login/${platform}`, { method: 'POST' });
         const data = await res.json();
+        if (!res.ok) {
+            throw new Error(apiErrorMessage(data, 'Camoufox riêng chưa sẵn sàng.'));
+        }
         if (data.success) {
             showToast(`👉 Hãy đăng nhập ${pName} trên cửa sổ vừa mở, sau đó đóng lại là xong!`, 'success');
         }
     } catch (e) {
-        showToast('❌ Không thể mở trình duyệt.', 'error');
+        showToast(`❌ ${e.message || 'Không thể mở trình duyệt.'}`, 'error');
     }
 }
 
