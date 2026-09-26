@@ -504,7 +504,13 @@ class HatBuiNhoCrawler:
             except Exception:
                 pass
 
-        if re.match(r'^\s*\d{1,2}:\d{2}', text):
+        time_match = re.match(r'^\s*(\d{1,2}):(\d{2})', text)
+        if time_match:
+            h, mn = int(time_match.group(1)), int(time_match.group(2))
+            now_time = today.hour * 60 + today.minute
+            vid_time = h * 60 + mn
+            if vid_time > now_time:
+                return False
             return True
 
         return False

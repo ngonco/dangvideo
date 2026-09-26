@@ -397,7 +397,37 @@ class TikTokPoster(BasePoster):
             return False
         return "/video/" in low or "/@" in low
 
+    def _read_os_clipboard(self) -> str:
+        import ctypes
+        try:
+            CF_UNICODETEXT = 13
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            if not user32.OpenClipboard(None):
+                return ""
+            try:
+                h_mem = user32.GetClipboardData(CF_UNICODETEXT)
+                if not h_mem:
+                    return ""
+                p_mem = kernel32.GlobalLock(h_mem)
+                if not p_mem:
+                    return ""
+                try:
+                    return (ctypes.c_wchar_p(p_mem).value or "").strip()
+                finally:
+                    kernel32.GlobalUnlock(h_mem)
+            finally:
+                user32.CloseClipboard()
+        except Exception:
+            return ""
+
     async def _read_clipboard(self, page: Page) -> str:
+        # 1. Direct OS clipboard read (instant, 100% reliable on Windows)
+        clip = self._read_os_clipboard()
+        if clip:
+            return clip
+
+        # 2. Browser clipboard with hard timeout (prevents hanging in Firefox/Camoufox)
         try:
             await page.context.grant_permissions(
                 ["clipboard-read", "clipboard-write"],
@@ -406,11 +436,17 @@ class TikTokPoster(BasePoster):
         except Exception:
             pass
         try:
-            text = await page.evaluate(
-                """async () => {
-                    try { return await navigator.clipboard.readText(); }
-                    catch (e) { return ''; }
-                }"""
+            text = await asyncio.wait_for(
+                page.evaluate(
+                    """async () => {
+                        try {
+                            if (!navigator.clipboard || !navigator.clipboard.readText) return '';
+                            const timeout = new Promise(resolve => setTimeout(() => resolve(''), 1500));
+                            return await Promise.race([navigator.clipboard.readText().catch(() => ''), timeout]);
+                        } catch (e) { return ''; }
+                    }"""
+                ),
+                timeout=2.5,
             )
             return (text or "").strip()
         except Exception:

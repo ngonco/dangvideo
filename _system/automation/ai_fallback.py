@@ -56,7 +56,7 @@ def get_ai_config() -> Dict[str, str]:
     return {
         "api_key": _env("VILAO_API_KEY"),
         "base_url": _env("VILAO_BASE_URL", "https://api.vilao.ai/v1"),
-        "model": _env("VILAO_MODEL", "anxs/gemini-3.7-flash-high"),
+        "model": _env("VILAO_MODEL", "llms/gemini-3.7-flash"),
     }
 
 
@@ -352,7 +352,10 @@ async def diagnose_and_recover(
         logger.info(f"AI {platform} bước {step}: action={action} recoverable={recoverable} — {reason}", "AI")
 
         if recoverable is False or action == "abort":
-            diagnosis = reason or error
+            if "Lỗi API Vilao:" in reason or "Thiếu VILAO_API_KEY" in reason:
+                diagnosis = f"{error} ({reason})"
+            else:
+                diagnosis = reason or error
             logger.error(f"AI không xử lý được {platform}: {diagnosis}", "AI")
             return {"ok": False, "diagnosis": diagnosis, "screenshot": last_shot}
 
