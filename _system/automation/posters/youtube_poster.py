@@ -179,7 +179,7 @@ class YouTubePoster(BasePoster):
 
         return False
 
-    async def post_video(self, page: Page, video_data: Dict[str, Any], privacy_override: Optional[str] = None, schedule_time: Optional[str] = None) -> Dict[str, Any]:
+    async def post_video(self, page: Page, video_data: Dict[str, Any], privacy_override: Optional[str] = None, schedule_time: Optional[str] = None, target_date: Optional[str] = None) -> Dict[str, Any]:
         file_path = video_data.get("file_path", "")
         if not self.validate_video_file(file_path):
             return {"success": False, "error": "File video không hợp lệ"}
@@ -192,7 +192,7 @@ class YouTubePoster(BasePoster):
         mark_ai = yt_config.get("mark_ai", True)
         privacy = privacy_override or yt_config.get("privacy", "public")
         
-        native = get_native_schedule(schedule_time or "")
+        native = get_native_schedule(schedule_time or "", target_date_override=target_date)
         should_schedule = native["enabled"]
         target_schedule_time = native["time"]
         target_dt = native["datetime"]

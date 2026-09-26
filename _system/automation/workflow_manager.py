@@ -95,6 +95,8 @@ class WorkflowManager:
         video_id: int,
         target_platforms: Optional[List[str]] = None,
         schedule_time: Optional[str] = None,
+        target_date: Optional[str] = None,
+        allow_repost: bool = False,
         enforce_ig_gap: bool = True,
     ) -> Dict[str, Any]:
         if self._is_busy:
@@ -109,7 +111,22 @@ class WorkflowManager:
                     logger.error(f"Không tìm thấy video ID #{video_id} trong cơ sở dữ liệu.", "WORKFLOW")
                     return {"success": False, "error": "Video không tồn tại"}
 
-                logger.info(f"Bắt đầu đăng tải video ID #{video_id}: '{video.get('suggested_title') or video.get('title')}'...", "WORKFLOW")
+                # Kiểm tra xem file video còn trên máy hay không, nếu đã bị dọn dẹp hoặc xóa thì tự động tải lại
+                import os
+                file_path = video.get("file_path", "")
+                if not file_path or not os.path.isfile(file_path):
+                    logger.warning(f"File video #{video_id} không tồn tại trên máy ({file_path}). Đang tự động tìm kiếm và tải lại từ HatBuiNho...", "WORKFLOW")
+                    new_path = await hatbuinho_crawler.redownload_video_for_repost(video)
+                    if new_path and os.path.isfile(new_path):
+                        db.update_video_file_path(video_id, new_path, os.path.getsize(new_path), "downloaded")
+                        video = db.get_video_by_id(video_id)
+                        logger.success(f"Đã tải lại video thành công: {new_path}", "WORKFLOW")
+                    else:
+                        msg = f"Không tìm thấy file video #{video_id} trên máy và không thể tải lại từ HatBuiNho."
+                        logger.error(msg, "WORKFLOW")
+                        return {"success": False, "error": msg}
+
+                logger.info(f"Bắt đầu đăng tải video ID #{video_id}: '{video.get('suggested_title') or video.get('title')}'{' (Cho phép đăng lại)' if allow_repost else ''}...", "WORKFLOW")
                 
                 platforms_cfg = config_mgr.get("platforms", {})
                 if target_platforms is None:
@@ -117,10 +134,11 @@ class WorkflowManager:
 
                 from core.schedule_helper import get_native_schedule, get_instagram_min_gap_hours
                 from datetime import datetime
-                native = get_native_schedule(schedule_time or "")
+                native = get_native_schedule(schedule_time or "", target_date_override=target_date)
                 sched_time = native["time"]
+                target_dt_str = native["date_iso"]
                 logger.info(
-                    f"Hẹn native công khai: {native['label']} (tải lên ngay, hiện lúc {sched_time} sáng mai). Instagram: chia sẻ ngay.",
+                    f"Hẹn native công khai: {native['label']} (tải lên ngay, hẹn lúc {native['label']}). Instagram: chia sẻ ngay.",
                     "WORKFLOW",
                 )
 
@@ -130,8 +148,8 @@ class WorkflowManager:
                 for plat in target_platforms:
                     logger.info(f"--- Đang chuẩn bị đăng lên {plat.upper()} ---", "WORKFLOW")
 
-                    # CHỐNG ĐĂNG TRÙNG THEO TỪNG KÊNH: Bỏ qua kênh nếu video này đã từng đăng thành công trước đó
-                    if plat in already_success_platforms:
+                    # CHỐNG ĐĂNG TRÙNG THEO TỪNG KÊNH: Bỏ qua kênh nếu video này đã từng đăng thành công trước đó (trừ khi cho phép đăng lại)
+                    if plat in already_success_platforms and not allow_repost:
                         msg = f"Video #{video_id} đã đăng thành công lên {plat.upper()} trước đó. Tự động bỏ qua kênh này để chống đăng trùng."
                         logger.info(f"[SKIP ĐĂNG TRÙNG] {msg}", plat.upper())
                         db.record_post(
@@ -175,13 +193,13 @@ class WorkflowManager:
                         page = await browser_engine.get_page(ctx)
 
                         if plat == "youtube":
-                            res = await youtube_poster.post_video(page, video, schedule_time=sched_time)
+                            res = await youtube_poster.post_video(page, video, schedule_time=sched_time, target_date=target_dt_str)
                         elif plat == "tiktok":
-                            res = await tiktok_poster.post_video(page, video, schedule_time=sched_time)
+                            res = await tiktok_poster.post_video(page, video, schedule_time=sched_time, target_date=target_dt_str)
                         elif plat == "facebook":
-                            res = await facebook_poster.post_video(page, video, schedule_time=sched_time)
+                            res = await facebook_poster.post_video(page, video, schedule_time=sched_time, target_date=target_dt_str)
                         elif plat == "instagram":
-                            res = await instagram_poster.post_video(page, video, schedule_time=sched_time)
+                            res = await instagram_poster.post_video(page, video, schedule_time=sched_time, target_date=target_dt_str)
 
                     except Exception as ex:
                         import traceback

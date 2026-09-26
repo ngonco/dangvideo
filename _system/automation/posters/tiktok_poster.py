@@ -552,6 +552,7 @@ class TikTokPoster(BasePoster):
         video_data: Dict[str, Any],
         privacy_override: Optional[str] = None,
         schedule_time: Optional[str] = None,
+        target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         file_path = video_data.get("file_path", "")
         if not self.validate_video_file(file_path):
@@ -560,7 +561,7 @@ class TikTokPoster(BasePoster):
         caption = self.format_caption(video_data)
         tt_config = config_mgr.get("platforms", {}).get("tiktok", {})
         mark_ai = tt_config.get("mark_ai", True)
-        native = get_native_schedule(schedule_time or "")
+        native = get_native_schedule(schedule_time or "", target_date_override=target_date)
         if not native["enabled"]:
             logger.error("schedule_publish đang tắt — không đăng TikTok ngay.", "TIKTOK")
             return await fail_with_ai(

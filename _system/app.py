@@ -64,11 +64,20 @@ class PostVideoRequest(BaseModel):
     video_id: int
     target_platforms: Optional[List[str]] = None
     schedule_time: Optional[str] = None
+    target_date: Optional[str] = None
 
 class RunWorkflowRequest(BaseModel):
     mode: Optional[str] = "normal"
     schedule_time: Optional[str] = None
+    target_date: Optional[str] = None
     force_repost: Optional[bool] = False
+    video_id: Optional[int] = None
+
+class RepostVideoRequest(BaseModel):
+    video_id: int
+    schedule_time: Optional[str] = None
+    target_date: Optional[str] = None
+    target_platforms: Optional[List[str]] = None
 
 class ScanRequest(BaseModel):
     max_items: Optional[int] = None
@@ -212,15 +221,69 @@ async def trigger_run_workflow(req: Optional[RunWorkflowRequest] = None):
         return {"success": False, "message": "Không tìm thấy video nào để đăng trên HatBuiNho."}
 
     from core.schedule_helper import get_native_schedule
-    native = get_native_schedule()
-    sched_time = req.schedule_time if req and req.schedule_time else native["time"]
+    native = get_native_schedule(
+        time_override=req.schedule_time or "" if req else "",
+        target_date_override=req.target_date if req else None
+    )
+    sched_time = native["time"]
+    target_date = native["date_iso"]
     res = await workflow_mgr.publish_video_to_platforms(
-        pending["id"], schedule_time=sched_time, enforce_ig_gap=True
+        pending["id"],
+        schedule_time=sched_time,
+        target_date=target_date,
+        allow_repost=force_repost,
+        enforce_ig_gap=True
     )
     v_title = pending.get("suggested_title") or pending.get("title")
     return {
         "success": True,
         "message": f"Đã hoàn thành phân phối đăng video #{pending['id']}: '{v_title}' (Hẹn native: {native['label']})!",
+        "details": res.get("details", {})
+    }
+
+@app.get("/api/schedule/next-slot-options")
+async def get_next_slot_options():
+    """Lấy danh sách các khung giờ hẹn đăng khả dụng tính từ post_time_slots cài đặt."""
+    from core.schedule_helper import get_available_slot_options, get_next_post_time_slot
+    return {
+        "next_slot": get_next_post_time_slot(),
+        "options": get_available_slot_options()
+    }
+
+@app.get("/api/videos/selection-list")
+async def get_selection_list(limit: int = 100):
+    """Danh sách tất cả video trong hệ thống (cả chờ đăng lẫn đã đăng) để người dùng chọn đăng lại."""
+    videos = db.get_all_videos_for_selection(limit=limit)
+    return {"videos": videos}
+
+@app.post("/api/action/repost")
+async def repost_video(req: RepostVideoRequest):
+    """Đăng lại một video cụ thể theo khung giờ hẹn do người dùng chọn."""
+    if workflow_mgr.is_busy:
+        return {"success": False, "message": "Hệ thống đang bận thực hiện tác vụ khác. Vui lòng đợi..."}
+    
+    video = db.get_video_by_id(req.video_id)
+    if not video:
+        return {"success": False, "message": f"Không tìm thấy video #{req.video_id}"}
+    
+    from core.schedule_helper import get_native_schedule
+    native = get_native_schedule(req.schedule_time or "", target_date_override=req.target_date)
+    sched_time = native["time"]
+    target_date = native["date_iso"]
+    
+    res = await workflow_mgr.publish_video_to_platforms(
+        video_id=req.video_id,
+        target_platforms=req.target_platforms,
+        schedule_time=sched_time,
+        target_date=target_date,
+        allow_repost=True,
+        enforce_ig_gap=False
+    )
+    v_title = video.get("suggested_title") or video.get("title") or f"#{req.video_id}"
+    return {
+        "success": res.get("success", False),
+        "scheduled_for": native["label"],
+        "message": f"Đã lên lịch đăng lại video '{v_title}' vào lúc {native['label']}!",
         "details": res.get("details", {})
     }
 

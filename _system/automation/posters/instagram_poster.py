@@ -332,6 +332,7 @@ class InstagramPoster(BasePoster):
         video_data: Dict[str, Any],
         privacy_override: Optional[str] = None,
         schedule_time: Optional[str] = None,
+        target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         file_path = video_data.get("file_path", "")
         if not self.validate_video_file(file_path):

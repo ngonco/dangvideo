@@ -926,13 +926,14 @@ class FacebookPoster(BasePoster):
         video_data: Dict[str, Any],
         privacy_override: Optional[str] = None,
         schedule_time: Optional[str] = None,
+        target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         file_path = video_data.get("file_path", "")
         if not self.validate_video_file(file_path):
             return {"success": False, "error": "File video không hợp lệ"}
 
         caption = self.format_caption(video_data)
-        native = get_native_schedule(schedule_time or "")
+        native = get_native_schedule(schedule_time or "", target_date_override=target_date)
 
         fb_cfg = config_manager.get_platform_config("facebook")
         target_type = fb_cfg.get("target_type", "personal")

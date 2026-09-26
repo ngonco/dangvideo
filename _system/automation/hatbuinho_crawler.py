@@ -810,4 +810,98 @@ class HatBuiNhoCrawler:
                 pass
             return downloaded_videos
 
+    async def redownload_video_for_repost(self, video_data: Dict[str, Any]) -> Optional[str]:
+        """Tải lại video cụ thể từ HatBuiNho khi file cục bộ đã bị dọn dẹp hoặc thất lạc."""
+        raw_script = (video_data.get("raw_script") or "").strip()
+        hb_id = (video_data.get("hatbuinho_id") or "").split("_")[0]
+        title = (video_data.get("title") or "").strip()
+
+        logger.info(f"Bắt đầu tìm kiếm tải lại video #{video_data.get('id')} từ HatBuiNho...", "HATBUINHO")
+        page = None
+        try:
+            ctx = await browser_engine.get_context()
+            page = await browser_engine.get_page(ctx)
+
+            logged_in = await self.login_if_needed(page)
+            if not logged_in:
+                logger.error("Không có session HatBuiNho hợp lệ để tải lại video.", "HATBUINHO")
+                return None
+
+            opened = await self._open_done_video_list(page)
+            if not opened:
+                logger.error("Không mở được danh sách video HatBuiNho.", "HATBUINHO")
+                return None
+
+            total_items = await page.locator('details.history-order').count()
+            target_idx = None
+
+            for idx in range(total_items):
+                try:
+                    item_locator = page.locator('details.history-order').nth(idx)
+                    summary_el = item_locator.locator('summary').first
+                    summary_text = await summary_el.inner_text()
+                    clean_sc = self._clean_script_text(summary_text)
+                    item_hash = hashlib.md5(clean_sc.encode('utf-8')).hexdigest()[:12]
+
+                    if (hb_id and hb_id == item_hash) or (raw_script and raw_script[:40] in clean_sc) or (clean_sc and clean_sc[:40] in raw_script):
+                        target_idx = idx
+                        logger.info(f"Đã tìm thấy video cần tải lại tại vị trí #{idx+1} trên HatBuiNho.", "HATBUINHO")
+                        break
+                except Exception:
+                    pass
+
+            if target_idx is None:
+                logger.warning(f"Không tìm thấy video '{title[:40]}' trong danh sách HatBuiNho hiện tại.", "HATBUINHO")
+                return None
+
+            item_locator = page.locator('details.history-order').nth(target_idx)
+            version_info = await self._select_highest_version_and_open_download(item_locator)
+            if version_info is None:
+                logger.warning("Không thể mở phiên bản video trên HatBuiNho.", "HATBUINHO")
+                return None
+
+            await asyncio.sleep(1.5)
+            modal = page.locator('#download_reminder_modal').first
+            try:
+                await modal.wait_for(state="visible", timeout=10000)
+            except Exception:
+                pass
+
+            file_name_candidate = version_info.get("suggested_filename") or f"{title or 'video_repost'}.mp4"
+            clean_name = re.sub(r'[\\/*?:"<>|]', "", file_name_candidate)
+            if not clean_name.endswith(".mp4"):
+                clean_name += ".mp4"
+
+            target_file_path = os.path.join(DOWNLOADS_DIR, f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{clean_name}")
+            download_succeeded = False
+
+            try:
+                btn_download_2 = modal.locator('button#btn_confirm_download_2, button:has-text("Tải xuống 2")').first
+                if await btn_download_2.is_visible(timeout=5000):
+                    async with page.expect_download(timeout=45000) as download_info:
+                        await btn_download_2.click()
+                    download = await download_info.value
+                    await download.save_as(target_file_path)
+                    if os.path.exists(target_file_path) and os.path.getsize(target_file_path) > 0:
+                        download_succeeded = True
+            except Exception as dl_ex:
+                logger.warning(f"Tải lại qua modal chưa thành công ({dl_ex}). Thử tải trực tiếp...", "HATBUINHO")
+
+            if not download_succeeded and version_info.get("media_url"):
+                download_succeeded = await self._direct_download_media(
+                    page,
+                    version_info.get("media_url"),
+                    target_file_path,
+                    version_info.get("order_id")
+                )
+
+            if download_succeeded and os.path.exists(target_file_path) and os.path.getsize(target_file_path) > 0:
+                logger.success(f"Đã tải lại thành công video: {target_file_path}", "HATBUINHO")
+                return target_file_path
+
+            return None
+        except Exception as ex:
+            logger.error(f"Lỗi khi tải lại video từ HatBuiNho: {ex}", "HATBUINHO")
+            return None
+
 hatbuinho_crawler = HatBuiNhoCrawler()

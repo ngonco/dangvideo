@@ -404,6 +404,82 @@
         </footer>
     </div>
 
+    <!-- MODAL CHỌN VIDEO & HẸN GIỜ ĐĂNG -->
+    <div class="modal-overlay" id="postSelectModal" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <span class="modal-icon">⚡</span>
+                    <div>
+                        <h2 class="modal-title">Đăng 1 Video Theo Hẹn Giờ</h2>
+                        <p class="modal-subtitle">Chọn khung giờ hẹn và video muốn đăng (tải mới hoặc đăng lại video cũ)</p>
+                    </div>
+                </div>
+                <button type="button" class="modal-close-btn" id="btnClosePostModal" title="Đóng">&times;</button>
+            </div>
+
+            <div class="modal-body">
+                <!-- KHUNG CHỌN GIỜ HẸN -->
+                <div class="modal-section modal-slot-section">
+                    <div class="slot-select-header">
+                        <label for="modalSlotSelect" class="slot-label">
+                            <span class="slot-label-icon">⏰</span>
+                            <span>Khung giờ hẹn đăng (Theo cài đặt):</span>
+                        </label>
+                        <span class="slot-badge-hint" id="modalSlotHint">Khung giờ tiếp theo</span>
+                    </div>
+                    <div class="slot-select-wrapper">
+                        <select id="modalSlotSelect" class="slot-dropdown">
+                            <!-- Populated via JS -->
+                        </select>
+                    </div>
+                    <p class="slot-note">
+                        💡 Nền tảng sẽ tải lên video ngay lập tức và tự động công khai vào đúng khung giờ này.
+                    </p>
+                </div>
+
+                <!-- TÙY CHỌN 1: TẢI VIDEO MỚI TỪ HATBUINHO -->
+                <div class="modal-section modal-action-new">
+                    <button type="button" class="btn-modal-download-new" id="btnModalDownloadNew">
+                        <div class="btn-new-left">
+                            <span class="btn-new-icon">📥</span>
+                            <div class="btn-new-text">
+                                <div class="btn-new-title">TẢI VIDEO MỚI TỪ HATBUINHO & ĐĂNG</div>
+                                <div class="btn-new-desc">Tự động quét và tải video mới chưa đăng trong tài khoản HatBuiNho</div>
+                            </div>
+                        </div>
+                        <span class="btn-new-arrow">➔</span>
+                    </button>
+                </div>
+
+                <!-- ĐƯỜNG PHÂN CÁCH -->
+                <div class="modal-divider">
+                    <span>HOẶC CHỌN VIDEO ĐÃ CÓ ĐỂ ĐĂNG LẠI</span>
+                </div>
+
+                <!-- TÌM KIẾM VIDEO TRONG KHO -->
+                <div class="modal-search-bar">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="modalVideoSearchInput" placeholder="Tìm kiếm theo tiêu đề hoặc kịch bản video..." />
+                    <button type="button" id="btnModalClearSearch" class="btn-clear-search" style="display: none;">✕</button>
+                </div>
+
+                <!-- DANH SÁCH VIDEO TRONG KHO / LỊCH SỬ -->
+                <div class="modal-video-list-container">
+                    <div class="modal-video-list" id="modalVideoList">
+                        <div class="modal-loading-state">
+                            <span class="spinner-small">⏳</span> Đang tải danh sách video...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn-modal-close" id="btnModalCancel">Đóng lại</button>
+            </div>
+        </div>
+    </div>
+
     <!-- TOAST THÔNG BÁO TIẾNG VIỆT TO RÕ -->
     <div class="toast-notification" id="toastBox">
         <span class="toast-icon" id="toastIcon">🌿</span>

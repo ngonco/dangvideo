@@ -57,10 +57,42 @@ function setupEventListeners() {
         btnBatchQueue.addEventListener('click', runBatchQueueDownload);
     }
 
-    // Nút 3: Đăng 1 Video Ngay
+    // Nút 3: Đăng 1 Video Ngay (Mở popup chọn video & khung giờ)
     const btnPostNow = document.getElementById('btnPostNow');
     if (btnPostNow) {
-        btnPostNow.addEventListener('click', runWorkflowNow);
+        btnPostNow.addEventListener('click', openPostSelectModal);
+    }
+
+    // Modal Đăng 1 Video & Hẹn Giờ
+    const btnClosePostModal = document.getElementById('btnClosePostModal');
+    if (btnClosePostModal) {
+        btnClosePostModal.addEventListener('click', closePostSelectModal);
+    }
+    const btnModalCancel = document.getElementById('btnModalCancel');
+    if (btnModalCancel) {
+        btnModalCancel.addEventListener('click', closePostSelectModal);
+    }
+    const postSelectModal = document.getElementById('postSelectModal');
+    if (postSelectModal) {
+        postSelectModal.addEventListener('click', (e) => {
+            if (e.target === postSelectModal) closePostSelectModal();
+        });
+    }
+    const btnModalDownloadNew = document.getElementById('btnModalDownloadNew');
+    if (btnModalDownloadNew) {
+        btnModalDownloadNew.addEventListener('click', handleModalDownloadNew);
+    }
+    const modalVideoSearchInput = document.getElementById('modalVideoSearchInput');
+    if (modalVideoSearchInput) {
+        modalVideoSearchInput.addEventListener('input', handleModalVideoSearch);
+    }
+    const btnModalClearSearch = document.getElementById('btnModalClearSearch');
+    if (btnModalClearSearch) {
+        btnModalClearSearch.addEventListener('click', () => {
+            modalVideoSearchInput.value = '';
+            btnModalClearSearch.style.display = 'none';
+            renderModalVideos(modalAllVideos);
+        });
     }
 
     const btnMuteAudio = document.getElementById('btnMuteAudio');
@@ -492,9 +524,252 @@ async function runBatchQueueDownload() {
 }
 
 // --------------------------------------------------------------------------
-// 3. ĐĂNG 1 VIDEO NGAY BÂY GIỜ (RUN WORKFLOW)
+// 3. ĐĂNG 1 VIDEO NGAY BÂY GIỜ & MODAL CHỌN VIDEO ĐĂNG LẠI
 // --------------------------------------------------------------------------
-async function runWorkflowNow(forceRepost = false) {
+let modalAllVideos = [];
+
+async function openPostSelectModal() {
+    const modal = document.getElementById('postSelectModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+
+    // Reset search
+    const searchInput = document.getElementById('modalVideoSearchInput');
+    if (searchInput) searchInput.value = '';
+    const btnClear = document.getElementById('btnModalClearSearch');
+    if (btnClear) btnClear.style.display = 'none';
+
+    // Tải mốc giờ và danh sách video song song
+    await Promise.all([
+        loadModalSlotOptions(),
+        loadModalVideos()
+    ]);
+}
+
+function closePostSelectModal() {
+    const modal = document.getElementById('postSelectModal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+function getSelectedModalSlot() {
+    const select = document.getElementById('modalSlotSelect');
+    if (!select || !select.options || select.selectedIndex < 0) {
+        return { time: '', target_date: 'today', label: '' };
+    }
+    const opt = select.options[select.selectedIndex];
+    return {
+        time: opt.value || '',
+        target_date: opt.getAttribute('data-target-date') || 'today',
+        label: opt.text || ''
+    };
+}
+
+async function loadModalSlotOptions() {
+    const select = document.getElementById('modalSlotSelect');
+    const hint = document.getElementById('modalSlotHint');
+    if (!select) return;
+    select.innerHTML = '<option value="">Đang tính khung giờ...</option>';
+
+    try {
+        const res = await fetch('/api/schedule/next-slot-options');
+        const data = await res.json();
+        const options = data.options || [];
+
+        if (options.length === 0) {
+            select.innerHTML = '<option value="11:30" data-target-date="today">11:30 - Hôm nay</option>';
+            return;
+        }
+
+        select.innerHTML = '';
+        options.forEach(opt => {
+            const optionEl = document.createElement('option');
+            optionEl.value = opt.time;
+            optionEl.setAttribute('data-target-date', opt.target_date);
+            optionEl.innerText = `${opt.label} ${opt.is_recommended ? '⭐ (Khung giờ tiếp theo)' : ''}`;
+            if (opt.is_recommended) {
+                optionEl.selected = true;
+                if (hint) hint.innerText = `Khung giờ tiếp theo: ${opt.time}`;
+            }
+            select.appendChild(optionEl);
+        });
+    } catch (e) {
+        console.error('Error loading slot options:', e);
+        select.innerHTML = '<option value="11:30" data-target-date="today">11:30 - Hôm nay</option>';
+    }
+}
+
+async function loadModalVideos() {
+    const container = document.getElementById('modalVideoList');
+    if (!container) return;
+    container.innerHTML = '<div class="modal-loading-state"><span class="spinner-small">⏳</span> Đang tải danh sách video trong hệ thống...</div>';
+
+    try {
+        const res = await fetch('/api/videos/selection-list');
+        const data = await res.json();
+        modalAllVideos = data.videos || [];
+        renderModalVideos(modalAllVideos);
+    } catch (e) {
+        console.error('Error loading modal videos:', e);
+        container.innerHTML = '<div class="modal-empty-state">❌ Không thể tải danh sách video. Vui lòng thử lại.</div>';
+    }
+}
+
+function handleModalVideoSearch() {
+    const searchInput = document.getElementById('modalVideoSearchInput');
+    const btnClear = document.getElementById('btnModalClearSearch');
+    const query = (searchInput.value || '').trim().toLowerCase();
+    if (btnClear) {
+        btnClear.style.display = query ? 'block' : 'none';
+    }
+
+    if (!query) {
+        renderModalVideos(modalAllVideos);
+        return;
+    }
+
+    const filtered = modalAllVideos.filter(v => {
+        const title = (v.suggested_title || v.title || '').toLowerCase();
+        const script = (v.raw_script || '').toLowerCase();
+        return title.includes(query) || script.includes(query);
+    });
+    renderModalVideos(filtered);
+}
+
+function renderModalVideos(videos) {
+    const container = document.getElementById('modalVideoList');
+    if (!container) return;
+
+    if (!videos || videos.length === 0) {
+        container.innerHTML = '<div class="modal-empty-state">Không tìm thấy video nào phù hợp.</div>';
+        return;
+    }
+
+    let html = '';
+    videos.forEach(v => {
+        const title = v.suggested_title || v.title || `Video #${v.id}`;
+        const cleanTitle = title.replace(/"/g, '&quot;');
+        
+        let statusBadge = '';
+        if (v.status === 'downloaded' && v.file_exists) {
+            statusBadge = '<span class="badge-video-status ready">📦 Trong kho sẵn sàng</span>';
+        } else if (v.status === 'posted') {
+            statusBadge = '<span class="badge-video-status posted">✅ Đã đăng</span>';
+        } else {
+            statusBadge = '<span class="badge-video-status redownload">🗑️ File đã dọn dẹp (tự tải lại)</span>';
+        }
+
+        // Platforms status icons
+        let platIcons = [];
+        if (v.platform_statuses) {
+            if (v.platform_statuses.youtube === 'success') platIcons.push('🔴 YT');
+            if (v.platform_statuses.tiktok === 'success') platIcons.push('⚫ TT');
+            if (v.platform_statuses.facebook === 'success') platIcons.push('🔵 FB');
+            if (v.platform_statuses.instagram === 'success') platIcons.push('🟣 IG');
+        }
+        const platStr = platIcons.length > 0 ? `• Đã đăng: ${platIcons.join(' ')}` : '';
+
+        const dateStr = v.created_date_str ? v.created_date_str.split(' ')[0] : '';
+        const sizeMb = v.file_size ? `${Math.round(v.file_size / (1024 * 1024))} MB` : '';
+
+        html += `
+            <div class="modal-video-card" data-video-id="${v.id}">
+                <div class="modal-vcard-info">
+                    <div class="modal-vcard-title" title="${cleanTitle}">${title}</div>
+                    <div class="modal-vcard-meta">
+                        ${statusBadge}
+                        ${sizeMb ? `<span style="font-size: 11px; color: var(--text-light);">${sizeMb}</span>` : ''}
+                        ${dateStr ? `<span style="font-size: 11px; color: var(--text-light);">${dateStr}</span>` : ''}
+                        ${platStr ? `<span class="modal-vcard-platforms">${platStr}</span>` : ''}
+                    </div>
+                </div>
+                <button type="button" class="btn-repost-action" onclick="onRepostVideoClick(${v.id}, '${encodeURIComponent(title)}')">
+                    ▶️ Đăng video này
+                </button>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+function handleModalDownloadNew() {
+    const slot = getSelectedModalSlot();
+    closePostSelectModal();
+    runWorkflowNow(false, slot.time, slot.target_date);
+}
+
+window.onRepostVideoClick = async function(videoId, encodedTitle) {
+    const title = decodeURIComponent(encodedTitle);
+    const slot = getSelectedModalSlot();
+    closePostSelectModal();
+    await repostSelectedVideo(videoId, slot.time, slot.target_date, title);
+};
+
+async function repostSelectedVideo(videoId, scheduleTime, targetDate, title) {
+    const btn = document.getElementById('btnPostNow');
+    const progressBox = document.getElementById('workflowProgressBox');
+    const progressTitle = document.getElementById('progressTitle');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressBarFill = document.getElementById('progressBarFill');
+    const progressStepDetail = document.getElementById('progressStepDetail');
+
+    if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+    }
+    if (progressBox) progressBox.style.display = 'block';
+    if (progressPercent) progressPercent.innerText = '20%';
+    if (progressBarFill) progressBarFill.style.width = '20%';
+    if (progressTitle) progressTitle.innerText = `⏳ Đang chuẩn bị đăng lại video #${videoId}...`;
+    if (progressStepDetail) progressStepDetail.innerText = `Kiểm tra tệp video và lên lịch hẹn đăng lúc ${scheduleTime || 'theo cài đặt'}...`;
+
+    showToast(`⚡ Đang chuẩn bị đăng lại video '${title}'...`, 'info');
+
+    try {
+        const res = await fetch('/api/action/repost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                video_id: videoId,
+                schedule_time: scheduleTime,
+                target_date: targetDate
+            })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            if (progressPercent) progressPercent.innerText = '100%';
+            if (progressBarFill) progressBarFill.style.width = '100%';
+            if (progressTitle) progressTitle.innerText = '✅ Hoàn tất đăng lại video!';
+            if (progressStepDetail) progressStepDetail.innerText = data.message || `Đã lên lịch đăng video thành công vào lúc ${data.scheduled_for}!`;
+            showToast(`🎉 ${data.message || 'Đăng lại video thành công!'}`, 'success');
+            await fetchHistory();
+            await fetchQueueSummary();
+            await fetchQueueVideos();
+        } else {
+            if (progressTitle) progressTitle.innerText = '⚠️ Thông báo từ hệ thống:';
+            if (progressStepDetail) progressStepDetail.innerText = data.message || 'Không thể đăng lại video này.';
+            showToast(data.message || 'Chưa đăng được video.', 'warn');
+        }
+    } catch (e) {
+        if (progressTitle) progressTitle.innerText = '❌ Có sự cố khi đăng video';
+        if (progressStepDetail) progressStepDetail.innerText = e.message;
+        showToast('❌ Sự cố kết nối máy chủ.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+        }
+        setTimeout(() => {
+            if (progressBox) progressBox.style.display = 'none';
+        }, 10000);
+    }
+}
+
+async function runWorkflowNow(forceRepost = false, scheduleTime = null, targetDate = null) {
     const isForce = forceRepost === true;
     const btn = document.getElementById('btnPostNow');
     const progressBox = document.getElementById('workflowProgressBox');
@@ -511,15 +786,19 @@ async function runWorkflowNow(forceRepost = false) {
     progressTitle.innerText = isForce ? '⏳ Đang ép tải lại video gần nhất...' : '⏳ Đang quét và tải video từ HatBuiNho...';
     progressStepDetail.innerText = isForce
         ? 'Chế độ ép đăng lại: Đang lấy video gần nhất trên HatBuiNho...'
-        : 'Ưu tiên video Chưa tải xuống trong kho / HatBuiNho (chống đăng trùng)...';
+        : `Ưu tiên video Chưa tải xuống trong kho / HatBuiNho (Hẹn giờ: ${scheduleTime || 'tự động'})...`;
 
     showToast(isForce ? '⚡ Đang thực hiện ép đăng lại...' : '⚡ Bắt đầu tiến trình tải & đăng 1 video...', 'info');
 
     try {
+        const payload = { mode: 'normal', force_repost: isForce };
+        if (scheduleTime) payload.schedule_time = scheduleTime;
+        if (targetDate) payload.target_date = targetDate;
+
         const res = await fetch('/api/action/run-workflow', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode: 'normal', force_repost: isForce })
+            body: JSON.stringify(payload)
         });
         const data = await res.json();
 
@@ -534,7 +813,7 @@ async function runWorkflowNow(forceRepost = false) {
                 "Bạn có chắc chắn muốn ép tải và đăng lại video gần nhất không?"
             );
             if (confirmed) {
-                return await runWorkflowNow(true);
+                return await runWorkflowNow(true, scheduleTime, targetDate);
             } else {
                 showToast('Đã hủy thao tác đăng lại video cũ.', 'info');
                 return;

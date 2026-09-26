@@ -249,6 +249,27 @@ class Database:
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
+    def get_all_videos_for_selection(self, limit: int = 60) -> List[Dict[str, Any]]:
+        """Lấy tất cả video (chờ đăng và đã đăng) để hiển thị trên popup chọn đăng lại."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT v.id, v.hatbuinho_id, v.title, v.suggested_title, v.hashtags, 
+                   v.file_path, v.file_size, v.status, v.created_date_str, v.downloaded_at,
+                   (SELECT GROUP_CONCAT(platform || ':' || status) FROM post_history WHERE video_id = v.id) as platform_statuses
+            FROM videos v
+            ORDER BY v.id DESC
+            LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                fpath = item.get("file_path") or ""
+                item["file_exists"] = bool(fpath and os.path.isfile(fpath))
+                results.append(item)
+            return results
+
     def record_post(self, video_id: int, platform: str, status: str, post_url: str = "", error_message: str = ""):
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self.get_connection() as conn:
@@ -419,5 +440,16 @@ class Database:
                 return datetime.fromisoformat(str(row[0]))
             except Exception:
                 return None
+
+    def update_video_file_path(self, video_id: int, file_path: str, file_size: int, status: str = "downloaded"):
+        """Cập nhật lại đường dẫn file và dung lượng khi video được tải lại."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            UPDATE videos 
+            SET file_path = ?, file_size = ?, status = ?
+            WHERE id = ?
+            """, (file_path, file_size, status, video_id))
+            conn.commit()
 
 db = Database()
