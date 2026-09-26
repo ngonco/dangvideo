@@ -42,36 +42,36 @@ class YouTubePoster(BasePoster):
         return clean.strip()
 
     async def _extract_youtube_url(self, page: Page) -> str:
-        """Trích xuất chính xác URL của video (https://youtube.com/shorts/<ID> hoặc https://youtu.be/<ID>)"""
+        """Lấy URL chỉ từ hộp upload đang hiển thị, không nhặt link video cũ trong DOM."""
         try:
             url = await page.evaluate("""() => {
-                const anchors = Array.from(document.querySelectorAll('a'));
-                for (const a of anchors) {
-                    const href = a.getAttribute('href') || a.innerText || '';
-                    const match = href.match(/https?:\\/\\/(?:youtu\\.be\\/|www\\.youtube\\.com\\/(?:shorts\\/|watch\\?v=))([a-zA-Z0-9_-]{8,15})/);
-                    if (match) {
-                        return 'https://youtube.com/shorts/' + match[1];
+                const visible = (el) => {
+                    if (!el) return false;
+                    const r = el.getBoundingClientRect();
+                    const s = getComputedStyle(el);
+                    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+                };
+                const roots = Array.from(document.querySelectorAll(
+                    'ytcp-uploads-dialog, ytcp-video-upload-progress, ytcp-video-share-dialog'
+                )).filter(visible);
+                if (!roots.length) return '';
+
+                const normalize = (value) => {
+                    const text = String(value || '');
+                    const match = text.match(/(?:https?:\\/\\/)?(?:youtu\\.be\\/|(?:www\\.)?youtube\\.com\\/(?:shorts\\/|watch\\?v=))([a-zA-Z0-9_-]{8,15})/);
+                    return match ? 'https://youtube.com/shorts/' + match[1] : '';
+                };
+                for (const root of roots) {
+                    const nodes = Array.from(root.querySelectorAll(
+                        'a#video-url, #video-url, a[href*="youtu.be/"], a[href*="youtube.com/watch"], input, span'
+                    ));
+                    for (const node of nodes) {
+                        const found = normalize(
+                            node.getAttribute?.('href') || node.value || node.innerText || node.textContent || ''
+                        );
+                        if (found) return found;
                     }
                 }
-
-                const containers = Array.from(document.querySelectorAll('ytcp-video-info, ytcp-video-share-dialog, [class*="video-url"], [class*="ytcp-video-info"], [aria-label*="link"], [aria-label*="liên kết"]'));
-                for (const el of containers) {
-                    const text = (el.innerText || '') + ' ' + (el.textContent || '') + ' ' + (el.innerHTML || '');
-                    const match = text.match(/(?:https?:\\/\\/)?(?:youtu\\.be\\/|www\\.youtube\\.com\\/(?:shorts\\/|watch\\?v=))([a-zA-Z0-9_-]{8,15})/);
-                    if (match) {
-                        return 'https://youtube.com/shorts/' + match[1];
-                    }
-                }
-
-                const inputs = Array.from(document.querySelectorAll('input, span'));
-                for (const inp of inputs) {
-                    const val = inp.value || inp.innerText || '';
-                    const match = val.match(/(?:https?:\\/\\/)?youtu\\.be\\/([a-zA-Z0-9_-]{8,15})/);
-                    if (match) {
-                        return 'https://youtube.com/shorts/' + match[1];
-                    }
-                }
-
                 return '';
             }""")
             return url or ""
@@ -108,6 +108,37 @@ class YouTubePoster(BasePoster):
             }"""))
         except Exception:
             return False
+
+    async def _verify_in_shorts_content(self, page: Page, title: str) -> str:
+        """Xác nhận dự phòng khi Studio không hiện share dialog sau khi Schedule."""
+        try:
+            match = re.search(r"(https://studio\.youtube\.com/channel/[^/?#]+)", page.url)
+            if not match:
+                return ""
+            await page.goto(match.group(1) + "/videos/short", wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(7)
+            rows = await page.evaluate("""() => Array.from(document.querySelectorAll('ytcp-video-row')).map(row => {
+                const titleEl = row.querySelector('#video-title');
+                const link = row.querySelector('a#video-title[href], a[href*="/video/"][href*="/edit"]');
+                return {
+                    title: (titleEl?.innerText || titleEl?.textContent || '').trim(),
+                    href: link?.href || '',
+                    text: (row.innerText || '').trim(),
+                };
+            }).filter(x => x.title && x.href)""")
+            wanted = re.sub(r"\s+", " ", (title or "").replace("#Shorts", "")).strip().lower()[:28]
+            for row in rows:
+                candidate = re.sub(r"\s+", " ", (row.get("title") or "").replace("#Shorts", "")).strip().lower()
+                if wanted and wanted not in candidate:
+                    continue
+                if "draft" in (row.get("text") or "").lower():
+                    continue
+                video_id = re.search(r"/video/([A-Za-z0-9_-]{8,15})", row.get("href") or "")
+                if video_id:
+                    return f"https://youtube.com/shorts/{video_id.group(1)}"
+        except Exception as exc:
+            logger.warning(f"Không xác nhận được video trong Channel content: {exc}", "YOUTUBE")
+        return ""
 
     async def _abort_if_daily_limit(self, page: Page):
         if await self._detect_daily_upload_limit(page):
@@ -235,12 +266,13 @@ class YouTubePoster(BasePoster):
             logger.info("Tìm nút Tạo / Create trên YouTube Studio...", "YOUTUBE")
             create_btn = page.locator('button#create-icon, ytcp-button#create-icon, button:has-text("CREATE"), button:has-text("TẠO"), button:has-text("Create"), button:has-text("Tạo")').first
             await create_btn.wait_for(state="visible", timeout=20000)
-            await create_btn.click(force=True)
+            await create_btn.evaluate("el => el.click()")
             await asyncio.sleep(1.5)
 
             # Click Upload videos / Tải video lên
             upload_item = page.locator('tp-yt-paper-item:has-text("Upload videos"), tp-yt-paper-item:has-text("Tải video lên"), tp-yt-paper-item:has-text("Upload video")').first
-            await upload_item.click(force=True)
+            await upload_item.wait_for(state="visible", timeout=15000)
+            await upload_item.evaluate("el => el.click()")
             await asyncio.sleep(2)
 
             # Attach video file
@@ -370,18 +402,36 @@ class YouTubePoster(BasePoster):
             if should_schedule:
                 logger.info(f"Cài đặt LÊN LỊCH XUẤT BẢN YouTube: {native['label']} (công khai)...", "YOUTUBE")
                 try:
-                    await page.evaluate("""() => {
+                    schedule_opened = await page.evaluate("""() => {
                         const schedRadio = document.querySelector('tp-yt-paper-radio-button[name="SCHEDULE"]')
-                                        || document.getElementById('schedule-radio-button')
-                                        || Array.from(document.querySelectorAll('tp-yt-paper-radio-button')).find(el => {
-                                            const t = (el.innerText || '').toLowerCase();
-                                            return t.includes('schedule') || t.includes('lên lịch');
-                                        });
+                            || document.getElementById('schedule-radio-button')
+                            || Array.from(document.querySelectorAll('tp-yt-paper-radio-button')).find(el => {
+                                             const t = (el.innerText || '').toLowerCase();
+                                             return t.includes('schedule') || t.includes('lên lịch');
+                            });
                         if (schedRadio) {
                             schedRadio.click();
                             schedRadio.setAttribute('aria-checked', 'true');
+                            return 'radio';
                         }
+                        return '';
                     }""")
+                    if not schedule_opened:
+                        for label_text in ("Schedule", "Lên lịch"):
+                            label = page.get_by_text(label_text, exact=True).first
+                            try:
+                                if await label.is_visible(timeout=1200):
+                                    await label.evaluate("""el => {
+                                        const hit = el.closest('button, ytcp-button, [role="button"], tp-yt-paper-item')
+                                            || el.parentElement || el;
+                                        hit.click();
+                                    }""")
+                                    schedule_opened = "accordion"
+                                    break
+                            except Exception:
+                                pass
+                    if not schedule_opened:
+                        return {"success": False, "url": "", "error": "Không tìm thấy khối Schedule/Lên lịch trên YouTube."}
                     await asyncio.sleep(2)
 
                     day, month, year = native["day"], native["month"], native["year"]
@@ -418,25 +468,114 @@ class YouTubePoster(BasePoster):
                             {"day": day, "month": month, "year": year},
                         )
                         logger.info(f"Đã chọn ngày YouTube: {native['date_dmy']} ({picked or 'thử time'})", "YOUTUBE")
+                        if not picked:
+                            await page.keyboard.press("Escape")
                         await asyncio.sleep(0.8)
 
-                    time_trigger = page.locator('#time-of-day-trigger, ytcp-dropdown-trigger#time-of-day-trigger, input[aria-label*="time"], input[aria-label*="giờ"]').first
-                    if await time_trigger.is_visible(timeout=5000):
+                    time_12 = native["time_12h_no_pad"]
+                    time_trigger = None
+                    all_inputs = page.locator('input')
+                    for input_index in range(await all_inputs.count()):
+                        candidate = all_inputs.nth(input_index)
+                        try:
+                            if not await candidate.is_visible(timeout=300):
+                                continue
+                            candidate_value = (await candidate.input_value()).strip()
+                            if re.match(r"^\d{1,2}:\d{2}\s*(?:AM|PM|SA|CH)$", candidate_value, re.I):
+                                time_trigger = candidate
+                                break
+                        except Exception:
+                            continue
+
+                    if time_trigger is not None:
                         await time_trigger.click(force=True)
-                        await asyncio.sleep(1)
-                        time_12 = native["time_12h_no_pad"]
-                        time_item = page.locator(
-                            f'tp-yt-paper-item:has-text("{target_schedule_time}"), '
-                            f'tp-yt-paper-item:has-text("{time_12}")'
-                        ).first
-                        if await time_item.is_visible(timeout=3000):
-                            await time_item.click(force=True)
-                        else:
-                            await page.keyboard.type(target_schedule_time, delay=40)
+                        await time_trigger.fill(time_12)
+                        await time_trigger.press("Enter")
+                        await time_trigger.press("Tab")
+                    else:
+                        current_time_label = None
+                        for current_value in ("12:00 AM", "12:00 SA"):
+                            candidate = page.get_by_text(current_value, exact=True).first
+                            try:
+                                if await candidate.is_visible(timeout=700):
+                                    current_time_label = candidate
+                                    break
+                            except Exception:
+                                pass
+                        if current_time_label is not None:
+                            await current_time_label.click(force=True)
+                            await page.keyboard.press("Control_L+A")
+                            await page.keyboard.type(time_12, delay=40)
                             await page.keyboard.press("Enter")
-                    logger.success(f"Đã lên lịch YouTube Shorts công khai lúc {native['label']}!", "YOUTUBE")
+                            await page.keyboard.press("Tab")
+                    await asyncio.sleep(1)
+
+                    schedule_state = await page.evaluate("""() => {
+                        const radio = document.querySelector('tp-yt-paper-radio-button[name="SCHEDULE"]')
+                            || document.getElementById('schedule-radio-button');
+                        const dateEl = document.querySelector('#datepicker-trigger, ytcp-dropdown-trigger#datepicker-trigger');
+                        const visible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+                        const timeEl = Array.from(document.querySelectorAll('input')).find(el => {
+                            const v = String(el.value || '').trim();
+                            return visible(el) && /^\d{1,2}:\d{2}\s*(?:AM|PM|SA|CH)$/i.test(v);
+                        }) || document.querySelector(
+                            '#time-of-day-trigger, ytcp-dropdown-trigger#time-of-day-trigger, '
+                            + 'input#time-of-day, #time-of-day, input[aria-label="Time"], input[aria-label="Giờ"]'
+                        );
+                        const value = (el) => String(el?.value || el?.innerText || el?.textContent || '').trim();
+                        return {
+                            checked: radio?.getAttribute('aria-checked') === 'true' || radio?.hasAttribute('checked'),
+                            date: value(dateEl),
+                            time: value(timeEl),
+                            expanded: !!(dateEl && timeEl),
+                        };
+                    }""")
+                    if not (schedule_state.get("checked") or schedule_state.get("expanded")):
+                        debug = await page.evaluate("""() => ({
+                            url: location.href,
+                            radios: Array.from(document.querySelectorAll(
+                                'tp-yt-paper-radio-button, [role="radio"], ytcp-radio-group *'
+                            )).map(el => ({
+                                tag: el.tagName,
+                                name: el.getAttribute('name') || '',
+                                aria: el.getAttribute('aria-checked') || '',
+                                text: (el.innerText || el.textContent || '').trim().slice(0, 180),
+                                visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
+                            })).filter(x => x.text || x.name).slice(0, 40),
+                            buttons: Array.from(document.querySelectorAll('ytcp-button, button')).map(el => ({
+                                id: el.id || '',
+                                aria: el.getAttribute('aria-label') || '',
+                                text: (el.innerText || el.textContent || '').trim().slice(0, 120),
+                                disabled: el.getAttribute('aria-disabled') || el.getAttribute('disabled') || '',
+                            })).filter(x => x.text || x.aria).slice(-30),
+                        })""")
+                        logger.error(f"YouTube Schedule radio debug: {debug}", "YOUTUBE")
+                        try:
+                            await page.screenshot(path=os.path.join(os.path.dirname(__file__), "..", "..", "debug_screenshots", "yt_schedule_radio_fail.png"))
+                        except Exception:
+                            pass
+                        return {"success": False, "url": "", "error": "YouTube chưa bật được chế độ Schedule; không ghi nhận thành công."}
+                    shown_time = schedule_state.get("time", "")
+                    accepted_times = (target_schedule_time, native["time_12h_no_pad"], native["time_12h"])
+                    normalize_time = lambda value: " ".join(str(value or "").replace("\u202f", " ").split()).lower()
+                    shown_time_norm = normalize_time(shown_time)
+                    if not any(candidate and normalize_time(candidate) in shown_time_norm for candidate in accepted_times):
+                        return {
+                            "success": False,
+                            "url": "",
+                            "error": (
+                                f"Giờ YouTube chưa khớp {target_schedule_time} "
+                                f"(đang thấy {shown_time!r}); không bấm Schedule."
+                            ),
+                        }
+                    logger.info(
+                        f"Đã xác nhận trường lịch YouTube: date={schedule_state.get('date')!r}, "
+                        f"time={schedule_state.get('time')!r}.",
+                        "YOUTUBE",
+                    )
                 except Exception as ex_sched:
-                    logger.warning(f"Không thể chọn mốc giờ Schedule chi tiết, tiếp tục với lịch mặc định: {ex_sched}", "YOUTUBE")
+                    logger.error(f"Không thể xác nhận mốc giờ Schedule: {ex_sched}", "YOUTUBE")
+                    return {"success": False, "url": "", "error": f"Không thể xác nhận lịch YouTube: {ex_sched}"}
 
             else:
                 logger.info(f"Cài đặt chế độ hiển thị: {privacy.upper()}", "YOUTUBE")
@@ -472,21 +611,32 @@ class YouTubePoster(BasePoster):
 
             action_name = "Lên lịch" if should_schedule else "Lưu/Xuất bản"
             logger.info(f"Bấm {action_name} video lên YouTube Shorts...", "YOUTUBE")
-            await page.evaluate("""() => {
-                const doneBtn = document.getElementById('done-button') 
-                             || document.querySelector('ytcp-button#done-button') 
-                             || Array.from(document.querySelectorAll('ytcp-button, button')).find(b => {
-                                 const t = (b.innerText || '').toLowerCase();
-                                 return t.includes('save') || t.includes('publish') || t.includes('schedule') || t.includes('lưu') || t.includes('xuất bản') || t.includes('lên lịch');
-                             });
-                if (doneBtn) doneBtn.click();
-            }""")
+            done_btn = page.locator('ytcp-button#done-button, button#done-button').first
+            await done_btn.wait_for(state="visible", timeout=20000)
+            done_ready = False
+            for _ in range(90):
+                limited = await self._abort_if_daily_limit(page)
+                if limited:
+                    return limited
+                aria_disabled = await done_btn.get_attribute("aria-disabled")
+                disabled = await done_btn.get_attribute("disabled")
+                if aria_disabled != "true" and disabled is None:
+                    done_ready = True
+                    break
+                await asyncio.sleep(1)
+            if not done_ready:
+                return {
+                    "success": False,
+                    "url": "",
+                    "error": "Nút Schedule YouTube vẫn bị khóa sau 90 giây; video còn Draft, không ghi nhận thành công.",
+                }
+            await done_btn.click(force=True)
             
             # -------------------------------------------------------------
             # XÁC THỰC KẾT QUẢ THỰC TẾ (CHỐNG TRẠNG THÁI ẢO)
             # -------------------------------------------------------------
             success_confirmed = False
-            for _ in range(15):
+            for _ in range(30):
                 await asyncio.sleep(2)
                 
                 # 1. Kiểm tra nếu xuất hiện banner / dialog báo limit
@@ -499,20 +649,30 @@ class YouTubePoster(BasePoster):
                     }
 
                 # 2. Kiểm tra nếu xuất hiện hộp thoại thành công hoặc video published/scheduled
-                share_dialog = page.locator('ytcp-video-share-dialog, :has-text("Video published"), :has-text("Video scheduled"), :has-text("Đã xuất bản video"), :has-text("Đã lên lịch xuất bản video")').first
+                share_dialog = page.locator(
+                    'ytcp-video-share-dialog, '
+                    'ytcp-dialog:has-text("Video published"), '
+                    'ytcp-dialog:has-text("Video scheduled"), '
+                    'ytcp-dialog:has-text("Đã xuất bản video"), '
+                    'ytcp-dialog:has-text("Đã lên lịch xuất bản video")'
+                ).first
                 if await share_dialog.is_visible(timeout=500):
                     success_confirmed = True
                     break
 
-                # 3. Kiểm tra nếu hộp thoại upload đã đóng hoàn toàn
-                upload_dialog = page.locator('ytcp-uploads-dialog').first
-                if not await upload_dialog.is_visible(timeout=500):
-                    success_confirmed = True
-                    break
-
             if not success_confirmed:
-                logger.error("❌ Hộp thoại YouTube Studio chưa đóng hoàn tất hoặc gặp lỗi xuất bản!", "YOUTUBE")
-                return await fail_with_ai(page, "youtube", "Hộp thoại YouTube Studio chưa đóng hoàn tất (có thể do lỗi xử lý hoặc bị giới hạn).", goal=SCHEDULE_GOAL)
+                verified_url = await self._verify_in_shorts_content(page, title)
+                if verified_url:
+                    extracted_url = verified_url
+                    success_confirmed = True
+                    logger.success(f"Đã xác nhận video trong Channel content: {verified_url}", "YOUTUBE")
+                else:
+                    logger.error("❌ YouTube không hiện xác nhận Video scheduled và không thấy hàng Shorts hợp lệ; không ghi thành công.", "YOUTUBE")
+                    return {
+                        "success": False,
+                        "url": "",
+                        "error": "YouTube không xác nhận Video scheduled; video có thể vẫn là Draft.",
+                    }
 
             final_url = await self._extract_youtube_url(page)
             if final_url:

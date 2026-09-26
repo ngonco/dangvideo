@@ -185,15 +185,44 @@ class InstagramPoster(BasePoster):
         return ok >= 1
 
     async def _fill_caption(self, page: Page, caption: str) -> bool:
-        box = page.locator(
-            '[aria-label="Write a caption..."], [aria-label="Viết chú thích..."], '
-            '[aria-label*="Write a caption"], [aria-label*="Viết chú thích"]'
-        ).first
         try:
-            await box.wait_for(state="visible", timeout=12000)
-            await box.click(force=True)
+            # Instagram thường xuyên đổi aria-label (Write/Add a caption) và
+            # đôi khi chỉ còn editor contenteditable không có nhãn.
+            box = page.locator(
+                'div[role="dialog"] [contenteditable="true"][role="textbox"]:visible, '
+                'div[role="dialog"] textarea[placeholder*="caption"]:visible, '
+                'div[role="dialog"] textarea[aria-label*="caption"]:visible, '
+                'div[role="dialog"] [aria-label*="caption"][contenteditable="true"]:visible, '
+                'div[role="dialog"] [aria-label*="chú thích"][contenteditable="true"]:visible, '
+                'div[role="dialog"] [contenteditable="true"]:visible'
+            ).first
+            await box.wait_for(state="visible", timeout=15000)
+            # Playwright click có thể treo trên editor Lexical mới của Instagram
+            # dù element đã visible; focus trực tiếp vẫn kích hoạt đúng editor.
+            await box.evaluate("""el => {
+                el.focus();
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }""")
             await asyncio.sleep(0.3)
-            await page.keyboard.type(caption, delay=18)
+            await page.keyboard.press("Backspace")
+            # type() phát đủ keydown/keypress/input để Lexical ghi nhận nội dung
+            # vào state React; insert_text đơn thuần có thể chỉ đổi DOM hiển thị.
+            await page.keyboard.type(caption, delay=8)
+            await asyncio.sleep(0.5)
+            actual = await box.evaluate(
+                "el => (el.value || el.innerText || el.textContent || '').trim()"
+            )
+            expected = caption.strip()[:20]
+            if expected and expected not in (actual or ""):
+                logger.warning(
+                    f"Ô chú thích Instagram chưa nhận nội dung (actual={actual[:80]!r}).",
+                    "INSTAGRAM",
+                )
+                return False
             logger.info("Đã điền chú thích Instagram (Bài viết).", "INSTAGRAM")
             await asyncio.sleep(0.8)
             return True
@@ -382,7 +411,13 @@ class InstagramPoster(BasePoster):
                     goal=INSTAGRAM_SHARE_GOAL,
                 )
 
-            await self._fill_caption(page, caption)
+            if not await self._fill_caption(page, caption):
+                await self._shot(page, "ig_caption_fail")
+                return await fail_with_ai(
+                    page, "instagram",
+                    "Không điền hoặc không xác nhận được chú thích; không bấm Share để tránh bài thiếu caption.",
+                    goal=INSTAGRAM_SHARE_GOAL,
+                )
 
             if not await self._click_share(page):
                 await self._shot(page, "ig_share_fail")

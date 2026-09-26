@@ -284,6 +284,27 @@ class Database:
             """, (video_id, status))
             conn.commit()
 
+    def update_latest_success_post_url(self, video_id: int, platform: str, post_url: str) -> bool:
+        """Cập nhật permalink cho lần đăng thành công gần nhất, không tạo thêm lịch sử giả."""
+        if not post_url:
+            return False
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE post_history
+                SET post_url = ?
+                WHERE id = (
+                    SELECT id FROM post_history
+                    WHERE video_id = ? AND platform = ? AND status = 'success'
+                    ORDER BY id DESC LIMIT 1
+                )
+                """,
+                (post_url, video_id, platform),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def get_post_history(self, video_id: Optional[int] = None, limit: int = 50) -> List[Dict[str, Any]]:
         with self.get_connection() as conn:
             cursor = conn.cursor()

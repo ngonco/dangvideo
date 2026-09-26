@@ -307,14 +307,14 @@ Một trang cuộn duy nhất:
 
 ### Quy Tắc 3: Song ngữ Anh - Việt
 
-### Quy Tắc 4: Hẹn native công khai 10:00 sáng mai (trừ Instagram)
-- **YouTube / TikTok / Facebook:** Schedule / Lên lịch ngày mai 10:00, công khai.
+### Quy Tắc 4: Hẹn native theo mốc đăng kế tiếp (trừ Instagram)
+- **YouTube / TikTok / Facebook:** Schedule / Lên lịch công khai theo mốc kế tiếp trong `schedule.post_time_slots`; cấu hình hiện tại là `11:30, 20:00`. Nếu không có danh sách mốc thì dùng `schedule_publish.default_time` và `target_date`.
   - **Facebook (Trang cá nhân & Fanpage):** Hỗ trợ linh hoạt cả 2 chế độ (chọn trên Web Dashboard):
     - `target_type = "personal"` (mặc định): Tự động chuyển về Trang cá nhân nếu phiên duyệt đang ở Fanpage (`_ensure_switched_to_personal`), sau đó lên lịch Reels trên Professional Dashboard cá nhân.
     - `target_type = "fanpage"`: Người dùng bấm "Quét Trang" (`GET /api/facebook/pages`) và chọn 1 Fanpage cụ thể trong dropdown. Trước khi đăng, hệ thống tự động chuyển profile sang Fanpage đã chọn (`_ensure_switched_to_fanpage`). Nếu ở chế độ Fanpage nhưng chưa chọn trang mục tiêu (`page_url` rỗng), hệ thống tự động bỏ qua đăng Facebook an toàn (`skipped`), các kênh khác vẫn đăng bình thường.
   - **TikTok:** `tiktokstudio/content` → Tải lên → `#panel-video input[type=file]` → radio `postSchedule=schedule` → timepicker → `post_video_button` Lên lịch; copy link tab Bài đăng.
 - **Instagram:** Bài viết / Post (không Story/Reel). Không `[role=switch]`, không Cài đặt nâng cao. Share / Chia sẻ (đúng chữ, không sheet Chia sẻ bài viết). Xong / Done → mở ô lưới đầu → `page.url` (`/p/` hoặc `/reel/`). Chạy thật: `instagram.min_gap_hours=3`.
-- `schedule_publish`: `enabled=true`, `default_time=10:00`, `target_date=tomorrow`.
+- `schedule_publish`: `enabled=true`; `default_time=10:00`, `target_date=tomorrow` chỉ là fallback khi không có mốc kế tiếp.
 
 ### Quy Tắc 5: DummyWriter khi `--noconsole`
 
@@ -388,5 +388,7 @@ Tài liệu này khớp mã nguồn hiện tại: native schedule, Instagram per
 
 | Ngày | Tác giả | Thay đổi | Lý do |
 | :--- | :--- | :--- | :--- |
+| 2026-09-26 | Codex | Kiểm tra đăng thật video #16 theo mốc 20:00; sửa Facebook không click tab Scheduled làm Camoufox thoát cứng, lấy permalink theo đúng caption từ DOM và chuẩn hóa URL sạch; cập nhật Instagram theo editor Lexical `Add a caption...`, chọn/xóa sạch nháp cũ, xác nhận nội dung và không Share nếu caption thất bại; thêm công cụ sửa caption bài đã đăng và xác minh lại trên tab mới. | Facebook đã lên lịch nhưng tiến trình lấy link thoát; Instagram đăng được nhưng selector caption cũ không còn khớp và caption đầu tiên cần được bổ sung lại. |
+| 2026-09-26 | Codex | Siết permalink YouTube/TikTok/Facebook; không lưu URL hồ sơ/thư viện; tránh clipboard cũ; thêm công cụ khôi phục link; YouTube chỉ ghi thành công khi nút Schedule khả dụng và có hộp xác nhận `Video scheduled`, không còn coi hộp upload đóng là thành công. | Log và kiểm tra trình duyệt thật cho thấy ba Shorts mới vẫn là Draft nhưng DB ghi success và tái sử dụng link video cũ; TikTok/Facebook từng lưu URL hồ sơ thay vì permalink bài. |
 | 2026-09-26 | Codex | Tách runtime Auto Đăng Video sang `_system/.runtime/auto-dang-video/`; thêm Python Embedded/lockfile, Camoufox browser/cache/temp riêng, cài staging + SHA-256, `runtime.json`, `owner.json`, mutex theo app/profile, executable tuyệt đối, API trạng thái/503, UI báo lỗi cài đặt và mọi launcher/build/update/publish dùng runtime riêng. Ép `platformdirs` về cache app-local trước lần import Camoufox đầu tiên vì Windows Known Folder không tuân theo `LOCALAPPDATA`. Bản portable nhúng runtime cũ được chuyển sang onefile tự cài browser lần đầu; release dùng artifact mới trong `_system` nên vẫn phát hành an toàn khi bản EXE gốc đang mở và bị Windows khóa. | Cho phép chạy đồng thời với Scan Viral mà không dùng cache/binary/mutex chung, không kill chéo browser, không commit gói gần 1 GB, không dừng workflow đang chạy để build và vẫn giữ nguyên cookie ở `_system/browser_profiles/camoufox/`. |
 | 2026-09-26 | Codex | Truyền Firefox major 152 khớp binary app-local vào `AsyncCamoufox` và thêm hồi quy source contract. | Ngăn Camoufox 0.5.6 gọi `installed_verstr()` rồi báo `official/stable is not installed` khi cache riêng không có managed-install metadata dù `executable_path` tuyệt đối đã hợp lệ. |

@@ -1,5 +1,6 @@
 import os
 import asyncio
+import re
 from typing import Dict, Any, Optional, List
 from playwright.async_api import Page
 from automation.posters.base_poster import BasePoster
@@ -673,31 +674,6 @@ class FacebookPoster(BasePoster):
             await asyncio.sleep(1)
         logger.warning("Hết thời gian chờ overlay Scheduling — vẫn sang Content Library.", "FACEBOOK")
 
-    async def _click_scheduled_tab(self, page: Page):
-        for name in ("Scheduled", "Đã lên lịch"):
-            tab = page.get_by_role("tab", name=name, exact=True)
-            try:
-                if await tab.is_visible(timeout=1500):
-                    await tab.click(force=True)
-                    await asyncio.sleep(1.5)
-                    return
-            except Exception:
-                pass
-        try:
-            clicked = await page.evaluate("""() => {
-                const tabs = Array.from(document.querySelectorAll('[role="tab"], div[role="button"], button, span'));
-                const hit = tabs.find(el => {
-                    const t = (el.innerText || '').trim().toLowerCase();
-                    return t === 'scheduled' || t === 'đã lên lịch';
-                });
-                if (hit) { hit.click(); return true; }
-                return false;
-            }""")
-            if clicked:
-                await asyncio.sleep(1.5)
-        except Exception:
-            pass
-
     async def _library_has_post_row(self, page: Page, caption: str = "") -> bool:
         markers = (
             "Scheduled • Tomorrow at 10:00",
@@ -734,9 +710,10 @@ class FacebookPoster(BasePoster):
                 await page.goto(FB_LIBRARY_SCHEDULED, wait_until="domcontentloaded", timeout=45000)
                 await asyncio.sleep(4)
                 await self._dismiss_fb_popups(page)
-            await self._click_scheduled_tab(page)
             for _ in range(8):
                 if await self._library_has_post_row(page, caption):
+                    return True
+                if await self._find_fb_permalink_in_loaded_library(page, caption):
                     return True
                 await asyncio.sleep(2)
         except Exception as e:
@@ -746,11 +723,33 @@ class FacebookPoster(BasePoster):
     def _is_fb_permalink(self, url: str) -> bool:
         u = (url or "").strip()
         low = u.lower()
-        if "facebook.com" not in low and "fb.watch" not in low and "fb.me" not in low:
+        if re.match(r"^https?://(?:www\.)?fb\.watch/[A-Za-z0-9_-]+/?(?:[?#].*)?$", u, re.I):
+            return True
+        if "facebook.com" not in low:
             return False
-        if "content_library" in low or "professional_dashboard/content" in low:
-            return False
-        return True
+        return bool(re.search(
+            r"facebook\.com/(?:share/r/[A-Za-z0-9_-]+|reel/\d+|watch/?\?v=\d+|"
+            r"[^/?#]+/videos/\d+|permalink\.php\?story_fbid=\d+|story\.php\?story_fbid=\d+)",
+            u,
+            re.I,
+        ))
+
+    def _normalize_fb_permalink(self, url: str) -> str:
+        """Bỏ query theo dõi/thông báo, giữ URL công khai chuẩn của bài Reel/video."""
+        u = (url or "").strip()
+        patterns = (
+            (r"^(https?://(?:www\.)?fb\.watch/[A-Za-z0-9_-]+)", r"\1/"),
+            (r"^https?://(?:www\.)?facebook\.com/reel/(\d+)", r"https://www.facebook.com/reel/\1/"),
+            (r"^https?://(?:www\.)?facebook\.com/share/r/([A-Za-z0-9_-]+)", r"https://www.facebook.com/share/r/\1/"),
+            (r"^https?://(?:www\.)?facebook\.com/([^/?#]+)/videos/(\d+)", r"https://www.facebook.com/\1/videos/\2/"),
+        )
+        for pattern, replacement in patterns:
+            if re.search(pattern, u, re.I):
+                return re.sub(pattern + r".*$", replacement, u, flags=re.I)
+        watch = re.search(r"facebook\.com/watch/?\?v=(\d+)", u, re.I)
+        if watch:
+            return f"https://www.facebook.com/watch/?v={watch.group(1)}"
+        return u
 
     def _read_os_clipboard(self) -> str:
         import ctypes
@@ -782,14 +781,8 @@ class FacebookPoster(BasePoster):
         if clip:
             return clip
 
-        # 2. Browser clipboard with hard timeout (prevents hanging in Firefox/Camoufox)
-        try:
-            await page.context.grant_permissions(
-                ["clipboard-read", "clipboard-write"],
-                origin="https://www.facebook.com",
-            )
-        except Exception:
-            pass
+        # 2. Browser clipboard with hard timeout (prevents hanging in Firefox/Camoufox).
+        # Không dùng grant_permissions: API đó không ổn định với Firefox persistent context.
         try:
             text = await asyncio.wait_for(
                 page.evaluate(
@@ -839,6 +832,46 @@ class FacebookPoster(BasePoster):
         logger.info(f"Menu ba chấm hàng Scheduled: {result}", "FACEBOOK")
         return isinstance(result, str) and result.startswith("ok:")
 
+    async def _find_fb_permalink_in_loaded_library(self, page: Page, caption: str) -> str:
+        """Tìm permalink trong DOM đã tải, không cần bấm tab Scheduled dễ làm Camoufox crash."""
+        snippet = ((caption or "").split("\n")[0] or "").strip()[:24].lower()
+        candidates = await page.evaluate("""(snippet) => {
+            const result = [];
+            for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+                const href = a.href || '';
+                if (!/(?:facebook\.com\/(?:share\/r\/|reel\/|watch\/?\?v=|[^/?#]+\/videos\/)|fb\.watch\/)/i.test(href)) continue;
+                let box = a;
+                for (let i = 0; i < 7 && box?.parentElement; i++, box = box.parentElement) {
+                    const text = (box.innerText || '').replace(/\s+/g, ' ').trim();
+                    if (text.length >= 20 && text.length <= 1600) {
+                        const low = text.toLowerCase();
+                        result.push({
+                            href,
+                            text: text.slice(0, 500),
+                            titleMatch: Boolean(snippet && low.includes(snippet)),
+                            scheduled: low.includes('scheduled') || low.includes('đã lên lịch') ||
+                                low.includes('tomorrow at') || low.includes('ngày mai lúc')
+                        });
+                        break;
+                    }
+                }
+            }
+            return result.slice(0, 40);
+        }""", snippet)
+        valid = [x for x in candidates if self._is_fb_permalink(x.get("href", ""))]
+        logger.info(
+            f"Permalink thấy trong Content Library: "
+            f"{[{'url': x.get('href', '')[:120], 'title': x.get('titleMatch'), 'scheduled': x.get('scheduled')} for x in valid[:10]]}",
+            "FACEBOOK",
+        )
+        for item in valid:
+            if item.get("titleMatch") and item.get("scheduled"):
+                return self._normalize_fb_permalink(item.get("href", ""))
+        for item in valid:
+            if item.get("titleMatch"):
+                return self._normalize_fb_permalink(item.get("href", ""))
+        return ""
+
     async def _click_copy_link_item(self, page: Page) -> bool:
         names = await page.evaluate("""() => {
             return Array.from(document.querySelectorAll('[role="menuitem"]')).map(el => {
@@ -868,27 +901,37 @@ class FacebookPoster(BasePoster):
         """Chờ Facebook tạo permalink, làm tươi tab Scheduled, Copy link bài vừa hẹn."""
         logger.info("Chờ Facebook tạo link bài vừa lên lịch, rồi làm tươi Content Library...", "FACEBOOK")
         await asyncio.sleep(20)
-        try:
-            await page.context.grant_permissions(
-                ["clipboard-read", "clipboard-write"],
-                origin="https://www.facebook.com",
-            )
-        except Exception:
-            pass
+        # Không gọi BrowserContext.grant_permissions cho clipboard ở đây.
+        # Camoufox dùng Firefox; lời gọi quyền clipboard kiểu Chromium có thể làm
+        # tiến trình trình duyệt thoát cứng. Sau cú click Copy link, Firefox vẫn
+        # cho phép đọc clipboard trong cùng trang khi có user activation.
 
         for attempt in range(8):
             logger.info(f"Làm tươi tab Scheduled để Copy link (lần {attempt + 1}/8)...", "FACEBOOK")
-            await page.goto(FB_LIBRARY_SCHEDULED, wait_until="domcontentloaded", timeout=45000)
+            # Content Library của Facebook đôi khi làm Camoufox thoát đột ngột khi
+            # gọi page.goto() lặp lại đúng URL đang mở. Lần đầu dùng luôn trang mà
+            # bước xác nhận vừa tải; các lần sau chỉ reload nhẹ.
+            current_url = page.url
+            logger.info(f"Content Library hiện tại: {current_url}", "FACEBOOK")
+            if "professional_dashboard/content/content_library" not in current_url:
+                await page.goto(FB_LIBRARY_SCHEDULED, wait_until="domcontentloaded", timeout=45000)
+            elif attempt > 0:
+                await page.reload(wait_until="domcontentloaded", timeout=45000)
+            logger.info("Content Library đã sẵn sàng, chờ giao diện ổn định...", "FACEBOOK")
             await asyncio.sleep(5)
+            logger.info("Đóng popup Facebook nếu có...", "FACEBOOK")
             await self._dismiss_fb_popups(page)
-            await self._click_scheduled_tab(page)
-
+            dom_url = await self._find_fb_permalink_in_loaded_library(page, caption)
+            if dom_url:
+                logger.success(f"Đã lấy link Facebook trực tiếp từ Content Library: {dom_url}", "FACEBOOK")
+                return dom_url
             if not await self._library_has_post_row(page, caption) and not await self._library_has_post_row(page, ""):
-                logger.warning("Tab Scheduled vẫn trống — chờ rồi tải lại.", "FACEBOOK")
+                logger.warning("Content Library chưa thấy hàng Scheduled — chờ rồi tải lại.", "FACEBOOK")
                 await self._shot(page, f"fb_library_empty_{attempt}")
                 await asyncio.sleep(12)
                 continue
 
+            clipboard_before = await self._read_fb_clipboard(page)
             opened = await self._open_scheduled_row_menu(page, caption)
             if not opened:
                 opened = await self._open_scheduled_row_menu(page, "")
@@ -911,9 +954,29 @@ class FacebookPoster(BasePoster):
 
             await asyncio.sleep(1.5)
             url = await self._read_fb_clipboard(page)
-            if self._is_fb_permalink(url):
+            if url != clipboard_before and self._is_fb_permalink(url):
+                url = self._normalize_fb_permalink(url)
                 logger.success(f"Đã Copy link Facebook: {url}", "FACEBOOK")
                 return url
+
+            snippet = ((caption or "").split("\n")[0] or "").strip()[:18]
+            href = await page.evaluate("""(snippet) => {
+                const sn = String(snippet || '').toLowerCase().slice(0, 12);
+                const rows = Array.from(document.querySelectorAll('tr, li, div')).filter(el => {
+                    const t = (el.innerText || '').toLowerCase();
+                    if (t.length < 20 || t.length > 1200) return false;
+                    const scheduled = t.includes('scheduled') || t.includes('đã lên lịch')
+                        || t.includes('tomorrow at') || t.includes('ngày mai lúc');
+                    return scheduled && (!sn || t.includes(sn));
+                }).sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                const links = Array.from(rows[0]?.querySelectorAll('a[href]') || []);
+                const hit = links.find(a => /\/(?:reel\/\d+|share\/r\/|videos\/\d+)/i.test(a.href || ''));
+                return (hit && hit.href) || '';
+            }""", snippet)
+            if self._is_fb_permalink(href):
+                href = self._normalize_fb_permalink(href)
+                logger.success(f"Đã lấy link Facebook từ DOM: {href}", "FACEBOOK")
+                return href
             logger.warning(f"Clipboard chưa có permalink Facebook (got={url[:120]!r}).", "FACEBOOK")
             await asyncio.sleep(12)
 
@@ -1085,11 +1148,11 @@ class FacebookPoster(BasePoster):
             if ok:
                 post_url = await self._copy_scheduled_post_link(page, caption)
             if not post_url:
-                logger.info(
-                    "Lưu URL Content Library làm link bài viết Facebook.",
+                logger.warning(
+                    "Đã lên lịch Facebook nhưng permalink chưa sẵn sàng; không lưu URL trang thư viện làm link bài.",
                     "FACEBOOK",
                 )
-            return {"success": True, "url": post_url or FB_LIBRARY_SCHEDULED, "error": ""}
+            return {"success": True, "url": post_url, "error": ""}
 
         except Exception as ex:
             logger.error(f"Lỗi khi đăng lên Facebook: {str(ex)}", "FACEBOOK")

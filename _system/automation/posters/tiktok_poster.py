@@ -1,5 +1,6 @@
 import os
 import asyncio
+import re
 from typing import Dict, Any, Optional
 from playwright.async_api import Page
 from automation.posters.base_poster import BasePoster
@@ -390,12 +391,11 @@ class TikTokPoster(BasePoster):
 
     def _is_tt_permalink(self, url: str) -> bool:
         u = (url or "").strip()
-        low = u.lower()
-        if "tiktok.com" not in low:
-            return False
-        if "tiktokstudio" in low or "creator-center" in low:
-            return False
-        return "/video/" in low or "/@" in low
+        return bool(re.match(
+            r"^https?://(?:www\.)?tiktok\.com/@[^/?#]+/video/\d+(?:[/?#].*)?$",
+            u,
+            re.I,
+        ))
 
     def _read_os_clipboard(self) -> str:
         import ctypes
@@ -519,6 +519,7 @@ class TikTokPoster(BasePoster):
             await self._dismiss_overlays(page)
             await self._click_posts_tab(page)
 
+            clipboard_before = await self._read_clipboard(page)
             opened = await self._open_copy_on_scheduled_row(page, caption)
             logger.info(f"Nút copy hàng Scheduled: {opened}", "TIKTOK")
             if not isinstance(opened, str) or not opened.startswith("ok:"):
@@ -528,14 +529,23 @@ class TikTokPoster(BasePoster):
 
             await asyncio.sleep(1.2)
             url = await self._read_clipboard(page)
-            if self._is_tt_permalink(url):
+            if url != clipboard_before and self._is_tt_permalink(url):
                 logger.success(f"Đã Copy link TikTok: {url}", "TIKTOK")
                 return url
 
-            href = await page.evaluate("""() => {
-                const a = document.querySelector('a[href*="/video/"]');
+            snippet = ((caption or "").split("\n")[0] or "").strip()[:18]
+            href = await page.evaluate("""(snippet) => {
+                const sn = String(snippet || '').toLowerCase().slice(0, 12);
+                const rows = Array.from(document.querySelectorAll('tr, li, div')).filter(el => {
+                    const t = (el.innerText || '').toLowerCase();
+                    if (t.length < 20 || t.length > 900) return false;
+                    const scheduled = t.includes('scheduled') || t.includes('lên lịch')
+                        || t.includes('10:00') || t.includes('am') || t.includes('sa');
+                    return scheduled && (!sn || t.includes(sn));
+                }).sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                const a = rows[0]?.querySelector('a[href*="/@"][href*="/video/"]');
                 return (a && a.href) || '';
-            }""")
+            }""", snippet)
             if self._is_tt_permalink(href):
                 logger.success(f"Đã lấy link TikTok từ DOM: {href}", "TIKTOK")
                 return href
@@ -685,10 +695,10 @@ class TikTokPoster(BasePoster):
             if not post_url:
                 logger.warning("Đã lên lịch TikTok nhưng chưa Copy được link bài.", "TIKTOK")
             logger.success(
-                f"Đã lên lịch TikTok công khai lúc {native['label']}! Link: {post_url or TT_CONTENT}",
+                f"Đã lên lịch TikTok công khai lúc {native['label']}! Link: {post_url or '(đang chờ permalink)'}",
                 "TIKTOK",
             )
-            return {"success": True, "url": post_url or TT_CONTENT, "error": ""}
+            return {"success": True, "url": post_url, "error": ""}
 
         except Exception as ex:
             logger.error(f"Lỗi khi đăng lên TikTok: {str(ex)}", "TIKTOK")

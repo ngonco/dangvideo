@@ -5,6 +5,7 @@ if hasattr(sys.stdout, "reconfigure"):
 import asyncio
 from test_full_suite import get_test_video, test_tiktok_step
 from automation.browser_engine import browser_engine
+from automation.posters.tiktok_poster import TikTokPoster
 
 
 async def main():
@@ -15,8 +16,8 @@ async def main():
     print("TT", tt)
     ok = tt.get("success") and not tt.get("error")
     url = (tt.get("url") or "")
-    if ok and "tiktokstudio" in url:
-        print("WARN: url vẫn là Studio Content, chưa copy permalink")
+    if ok and not TikTokPoster()._is_tt_permalink(url):
+        print("WARN: url chưa phải permalink TikTok video:", url)
         return 1
     return 0 if ok else 1
 
