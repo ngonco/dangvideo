@@ -112,10 +112,15 @@ def get_native_schedule(
     cfg = config_mgr.get("schedule_publish", {}) or {}
     enabled = cfg.get("enabled", True)
 
+    time_override = (time_override or "").strip()
+    target_date_override = (target_date_override or "").strip() if target_date_override else None
+
     if not time_override and not target_date_override:
         next_slot = get_next_post_time_slot(now)
+        target = next_slot["datetime"]
+        hour = target.hour
+        minute = target.minute
         time_str = next_slot["time"]
-        target_date = next_slot["target_date"]
     else:
         time_str = str(time_override or cfg.get("default_time") or "10:00").strip()
         try:
@@ -134,17 +139,17 @@ def get_native_schedule(
             else:
                 target_date = "tomorrow"
 
-    if target_date in ("today", "hom_nay"):
-        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if target <= now:
-            target += timedelta(days=1)
-    elif target_date in ("tomorrow", "ngay_mai"):
-        target = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-    else:
-        try:
-            target = datetime.fromisoformat(target_date).replace(hour=hour, minute=minute, second=0, microsecond=0)
-        except Exception:
+        if target_date in ("today", "hom_nay"):
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+        elif target_date in ("tomorrow", "ngay_mai"):
             target = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        else:
+            try:
+                target = datetime.fromisoformat(target_date).replace(hour=hour, minute=minute, second=0, microsecond=0)
+            except Exception:
+                target = (now + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
 
     time_12h = target.strftime("%I:%M %p").lstrip("0")
     if time_12h.startswith(": "):

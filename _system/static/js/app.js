@@ -738,6 +738,10 @@ async function repostSelectedVideo(videoId, scheduleTime, targetDate, title) {
                 target_date: targetDate
             })
         });
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Lỗi máy chủ (${res.status}): ${errText.slice(0, 150)}`);
+        }
         const data = await res.json();
 
         if (data.success) {
@@ -800,6 +804,10 @@ async function runWorkflowNow(forceRepost = false, scheduleTime = null, targetDa
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Lỗi máy chủ (${res.status}): ${errText.slice(0, 150)}`);
+        }
         const data = await res.json();
 
         if (data.need_confirmation) {
