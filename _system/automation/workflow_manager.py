@@ -66,8 +66,7 @@ class WorkflowManager:
                 logger.info(f"🚀 Bắt đầu quét & tải hàng loạt toàn bộ video 'Chưa tải xuống' vào Kho Hàng Đợi...", "WORKFLOW")
                 results = await hatbuinho_crawler.scan_and_download(max_items=max_items, force_latest=False, oldest_first=True)
                 
-                slots = config_mgr.get("schedule", {}).get("post_time_slots", ["08:00", "11:30", "19:30"])
-                queue_summary = db.get_queue_summary(slots_per_day=len(slots))
+                queue_summary = db.get_queue_summary(slots_per_day=1)
                 
                 if len(results) > 0:
                     msg = f"Đã tải về thành công {len(results)} video vào Kho Hàng Đợi! (Hiện có {queue_summary['total_pending']} video, dự kiến đăng trong {queue_summary['estimated_days']} ngày)."
@@ -241,6 +240,20 @@ class WorkflowManager:
 
                     # Delay between platforms
                     await asyncio.sleep(4)
+
+                successful_after_run = set(db.get_successful_platforms_for_video(video_id))
+                required_platforms = set(target_platforms)
+                missing_platforms = sorted(required_platforms - successful_after_run)
+                if missing_platforms:
+                    db.set_video_status(video_id, "downloaded")
+                    logger.warning(
+                        "Video vẫn được giữ trong hàng đợi vì chưa đăng thành công lên: "
+                        + ", ".join(p.upper() for p in missing_platforms),
+                        "WORKFLOW",
+                    )
+                else:
+                    db.set_video_status(video_id, "posted")
+                    logger.success("Video đã hoàn tất trên tất cả kênh mục tiêu.", "WORKFLOW")
 
                 return {"success": True, "details": results}
 

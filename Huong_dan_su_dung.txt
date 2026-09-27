@@ -10,6 +10,7 @@
 - Hệ thống sẽ tự động khởi động máy chủ ngầm.
 - Trình duyệt sẽ tự động mở Bảng Điều Khiển tại: http://127.0.0.1:8000
 - Biểu tượng logo sẽ xuất hiện tại Khay Hệ Thống (góc dưới bên phải màn hình).
+- Chế độ tự động sẽ kiểm tra đăng video ngay khi ứng dụng mở. Nếu hôm nay chưa đăng thành công, hệ thống tự kiểm tra lại mỗi 30 phút.
 
 
 2. TƯƠNG TÁC VỚI BIỂU TƯỢNG KHAY HỆ THỐNG (SYSTEM TRAY ICON):
@@ -20,6 +21,8 @@
   + 🚀 Khởi Động Cùng Windows (Bật/Tắt chạy ngầm khi mở máy tính)
   + 🔄 Kiểm Tra Cập Nhật
   + ❌ Thoát Ứng Dụng (Tắt an toàn)
+
+Ứng dụng tự kiểm tra bản mới trên GitHub mỗi 6 giờ. Bản mới được tải khi hệ thống rảnh và tự cài ở lần mở ứng dụng tiếp theo.
 
 
 3. THƯ MỤC LƯU TRỮ:

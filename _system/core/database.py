@@ -32,9 +32,18 @@ class Database:
                 file_size INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'downloaded',
                 created_date_str TEXT,
+                source_media_key TEXT DEFAULT '',
                 downloaded_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
             )
             """)
+
+            cursor.execute("PRAGMA table_info(videos)")
+            video_columns = {row[1] for row in cursor.fetchall()}
+            if "source_media_key" not in video_columns:
+                cursor.execute("ALTER TABLE videos ADD COLUMN source_media_key TEXT DEFAULT ''")
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_videos_source_media_key ON videos(source_media_key)"
+            )
 
             # Post history table
             cursor.execute("""
@@ -59,14 +68,18 @@ class Database:
             cursor.execute("""
             INSERT INTO videos (
                 hatbuinho_id, title, raw_script, suggested_title, hashtags,
-                file_path, file_size, status, created_date_str, downloaded_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                file_path, file_size, status, created_date_str, source_media_key, downloaded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(hatbuinho_id) DO UPDATE SET
                 title = COALESCE(excluded.title, videos.title),
                 suggested_title = COALESCE(excluded.suggested_title, videos.suggested_title),
                 hashtags = COALESCE(excluded.hashtags, videos.hashtags),
                 file_path = COALESCE(excluded.file_path, videos.file_path),
                 file_size = COALESCE(excluded.file_size, videos.file_size),
+                source_media_key = CASE
+                    WHEN excluded.source_media_key != '' THEN excluded.source_media_key
+                    ELSE videos.source_media_key
+                END,
                 status = CASE 
                     WHEN videos.status IN ('posted', 'cleaned') THEN videos.status 
                     ELSE COALESCE(excluded.status, videos.status) 
@@ -81,6 +94,7 @@ class Database:
                 video_data.get("file_size", 0),
                 video_data.get("status", "downloaded"),
                 video_data.get("created_date_str", ""),
+                video_data.get("source_media_key", ""),
                 now_str
             ))
             conn.commit()
@@ -89,32 +103,91 @@ class Database:
             row = cursor.fetchone()
             return row["id"] if row else cursor.lastrowid
 
-    def is_video_already_processed(self, hatbuinho_id: str, raw_script: str = "") -> bool:
-        """Kiểm tra video đã tồn tại trong DB (đã tải, đã đăng, hoặc đã dọn dẹp)."""
+    def get_processed_video(self, hatbuinho_id: str, raw_script: str = "") -> Optional[Dict[str, Any]]:
+        """Trả về bản ghi video đã có theo hash hoặc kịch bản, ưu tiên bản mới nhất."""
         if not hatbuinho_id:
-            return False
+            return None
         with self.get_connection() as conn:
             cursor = conn.cursor()
             base_id = hatbuinho_id.split("_")[0]
             cursor.execute("""
-            SELECT id, status FROM videos 
+            SELECT * FROM videos
             WHERE hatbuinho_id = ? 
                OR hatbuinho_id LIKE ? 
+            ORDER BY id DESC
             LIMIT 1
             """, (hatbuinho_id, f"{base_id}_%"))
             row = cursor.fetchone()
             if row:
-                return True
+                return dict(row)
             
             if raw_script and len(raw_script.strip()) > 20:
                 cursor.execute("""
-                SELECT id, status FROM videos 
+                SELECT * FROM videos
                 WHERE raw_script = ? 
+                ORDER BY id DESC
                 LIMIT 1
                 """, (raw_script.strip(),))
-                if cursor.fetchone():
-                    return True
-            return False
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+            return None
+
+    def is_video_already_processed(self, hatbuinho_id: str, raw_script: str = "") -> bool:
+        """Kiểm tra video đã tồn tại trong DB (đã tải, đã đăng, hoặc đã dọn dẹp)."""
+        return self.get_processed_video(hatbuinho_id, raw_script) is not None
+
+    def get_video_by_source_media_key(self, source_media_key: str) -> Optional[Dict[str, Any]]:
+        """Tìm đúng một phiên bản media, không gộp các lần render chung kịch bản."""
+        if not source_media_key:
+            return None
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM videos WHERE source_media_key = ? ORDER BY id DESC LIMIT 1",
+                (source_media_key,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_legacy_video_by_content(self, hatbuinho_id: str, raw_script: str = "") -> Optional[Dict[str, Any]]:
+        """Tìm bản ghi cũ chưa có định danh media để nâng cấp tương thích."""
+        if not hatbuinho_id:
+            return None
+        base_id = hatbuinho_id.split("_")[0]
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM videos
+                WHERE COALESCE(source_media_key, '') = ''
+                  AND (hatbuinho_id = ? OR hatbuinho_id LIKE ?)
+                ORDER BY id DESC LIMIT 1
+                """,
+                (hatbuinho_id, f"{base_id}_%"),
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            if raw_script and len(raw_script.strip()) > 20:
+                row = cursor.execute(
+                    """
+                    SELECT * FROM videos
+                    WHERE COALESCE(source_media_key, '') = '' AND raw_script = ?
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (raw_script.strip(),),
+                ).fetchone()
+                return dict(row) if row else None
+            return None
+
+    def set_source_media_key(self, video_id: int, source_media_key: str) -> None:
+        if not source_media_key:
+            return
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE videos SET source_media_key = ? WHERE id = ?",
+                (source_media_key, video_id),
+            )
+            conn.commit()
 
     def get_video_by_file_size(self, file_size: int, exclude_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Kiểm tra xem có video nào trong DB có cùng dung lượng byte chính xác hay không."""
@@ -278,10 +351,14 @@ class Database:
             INSERT INTO post_history (video_id, platform, status, post_url, error_message, posted_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """, (video_id, platform, status, post_url, error_message, now_str))
-            
-            cursor.execute("""
-            UPDATE videos SET status = 'posted' WHERE id = ? AND ? = 'success'
-            """, (video_id, status))
+            conn.commit()
+
+    def set_video_status(self, video_id: int, status: str) -> None:
+        """Cập nhật trạng thái tổng thể sau khi đã đánh giá đủ các kênh mục tiêu."""
+        if status not in {"downloaded", "posted", "cleaned"}:
+            raise ValueError(f"Trạng thái video không hợp lệ: {status}")
+        with self.get_connection() as conn:
+            conn.execute("UPDATE videos SET status = ? WHERE id = ?", (status, video_id))
             conn.commit()
 
     def update_latest_success_post_url(self, video_id: int, platform: str, post_url: str) -> bool:
@@ -435,6 +512,21 @@ class Database:
                 "total_posts_failed": total_posts_failed,
                 "posts_today": posts_today
             }
+
+    def has_successful_video_today(self) -> bool:
+        """True khi ít nhất một video đã đăng thành công lên một kênh trong ngày."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1 FROM post_history
+                WHERE status = 'success' AND DATE(posted_at) = ?
+                LIMIT 1
+                """,
+                (today_str,),
+            )
+            return cursor.fetchone() is not None
 
     def get_last_success_at(self, platform: str) -> Optional[datetime]:
         """Thời điểm success gần nhất của một nền tảng (posted_at)."""

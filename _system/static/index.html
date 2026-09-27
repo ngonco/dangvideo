@@ -21,7 +21,7 @@
                 </div>
             </div>
             <div class="header-status">
-                <span class="version-tag" id="appVersion">Bản 1.11.0</span>
+                <span class="version-tag" id="appVersion">Bản 1.12.0</span>
                 <span class="badge badge-success" id="serverStatusBadge">🟢 Máy Chủ Đang Chạy</span>
             </div>
         </header>
@@ -35,7 +35,7 @@
                     <div class="status-indicator-icon" id="heroStatusIcon">🟢</div>
                     <div class="status-indicator-info">
                         <h2 id="heroStatusTitle">HỆ THỐNG ĐANG TỰ ĐỘNG ĐĂNG VIDEO</h2>
-                        <p id="heroStatusDesc">Đang tự động chạy ngầm theo các khung giờ hẹn bên dưới. Khi bật laptop là máy tự chạy.</p>
+                        <p id="heroStatusDesc">Kiểm tra ngay khi mở ứng dụng và mỗi 30 phút cho tới khi hôm nay đã đăng video.</p>
                         <div class="queue-summary-banner" id="queueSummaryBanner">
                             📦 <b>Kho Hàng Đợi:</b> <span id="queueSummaryText">Đang kiểm tra kho video...</span>
                         </div>
@@ -94,8 +94,8 @@
                         <div class="timeslot-title-group">
                             <span class="timeslot-icon">⏰</span>
                             <div>
-                                <h3>Khung Hẹn Giờ Đăng Video Mỗi Ngày</h3>
-                                <p class="timeslot-sub">Video sẽ tự động tải & đăng lên các kênh vào đúng các mốc giờ bên dưới:</p>
+                                <h3>Khung Giờ Công Khai Video</h3>
+                                <p class="timeslot-sub">YouTube, TikTok và Facebook sẽ hẹn công khai ở mốc phù hợp tiếp theo:</p>
                             </div>
                         </div>
                     </div>
@@ -373,9 +373,11 @@
 
                         <!-- CẬP NHẬT PHẦN MỀM -->
                         <div class="advanced-item-box" style="grid-column: span 2;">
-                            <h3>🔄 Cập Nhật Ứng Dụng Mới Nhất</h3>
-                            <p class="box-desc">Kiểm tra và tải bản cập nhật mã nguồn mới nhất từ GitHub 1-click:</p>
-                            <button class="btn btn-primary" id="btnCheckUpdate">🔄 Kiểm Tra & Cập Nhật</button>
+                            <h3>🔄 Cập Nhật Ứng Dụng Tự Động</h3>
+                            <p class="box-desc">Luôn bật. Ứng dụng tự tải bản phát hành chính thức từ GitHub và cài ở lần mở tiếp theo.</p>
+                            <div id="updateStatus" style="margin: 10px 0; font-weight: 600;">⏳ Đang đọc trạng thái cập nhật...</div>
+                            <progress id="updateProgress" value="0" max="100" style="display: none; width: 100%; height: 12px; margin-bottom: 10px;"></progress>
+                            <button class="btn btn-primary" id="btnCheckUpdate">🔄 Kiểm Tra Ngay</button>
                         </div>
                     </div>
 

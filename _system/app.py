@@ -16,6 +16,7 @@ from core.database import db
 from core.config_manager import config_mgr, ROOT_DIR, SYSTEM_DIR, DOWNLOADS_DIR, get_app_version
 from core.autostart_manager import autostart_mgr
 from core.browser_runtime import browser_runtime
+from core.update_manager import update_manager
 from automation.workflow_manager import workflow_mgr
 from scheduler.task_scheduler import task_scheduler
 
@@ -87,8 +88,11 @@ async def lifespan(app: FastAPI):
     logger.info("Khởi động hệ thống Auto Đăng Video...", "SERVER")
     _start_browser_runtime_install()
     task_scheduler.start()
+    update_manager.set_busy_provider(lambda: workflow_mgr.is_busy)
+    await update_manager.start()
     yield
     # Shutdown: Stop scheduler & close browser
+    await update_manager.stop()
     task_scheduler.stop()
     from automation.browser_engine import browser_engine
     await browser_engine.close()
@@ -146,7 +150,7 @@ async def get_stats():
     stats = db.get_stats()
     sched_cfg = config_mgr.get("schedule", {})
     stats["auto_mode"] = sched_cfg.get("auto_mode", False)
-    stats["max_posts_per_day"] = sched_cfg.get("max_posts_per_day", 3)
+    stats["max_posts_per_day"] = 1
     stats["is_busy"] = workflow_mgr.is_busy
     return stats
 
@@ -388,8 +392,7 @@ async def update_time_slots(req: TimeSlotsRequest):
 
 @app.get("/api/queue/summary")
 async def get_queue_summary():
-    slots = config_mgr.get("schedule", {}).get("post_time_slots", ["08:00", "11:30", "19:30"])
-    summary = db.get_queue_summary(slots_per_day=len(slots))
+    summary = db.get_queue_summary(slots_per_day=1)
     return {"success": True, "queue": summary}
 
 @app.get("/api/queue/videos")
@@ -556,23 +559,18 @@ async def toggle_autostart(req: AutoStartRequest):
 
 @app.post("/api/system/update")
 async def perform_system_update():
-    logger.info("Bắt đầu kiểm tra và cập nhật mã nguồn từ GitHub...", "UPDATE")
-    try:
-        res = subprocess.run(["git", "pull", "origin", "main"], capture_output=True, text=True, cwd=ROOT_DIR, timeout=40)
-        output = (res.stdout or "") + (res.stderr or "")
-        if res.returncode == 0:
-            if "Already up to date" in output or "Already up-to-date" in output:
-                logger.success("Hệ thống đã ở phiên bản mới nhất!", "UPDATE")
-                return {"success": True, "message": "Hệ thống đã ở phiên bản mới nhất!", "output": output}
-            else:
-                logger.success(f"Đã cập nhật thành công bản mới từ GitHub:\n{output}", "UPDATE")
-                return {"success": True, "message": "Đã cập nhật thành công bản mới từ GitHub!", "output": output}
-        else:
-            logger.error(f"Lỗi khi kéo mã nguồn từ GitHub: {output}", "UPDATE")
-            return {"success": False, "error": output}
-    except Exception as ex:
-        logger.error(f"Lỗi ngoại lệ khi cập nhật: {str(ex)}", "UPDATE")
-        return {"success": False, "error": str(ex)}
+    """Backward-compatible alias for the packaged release updater."""
+    return await update_manager.trigger_check()
+
+
+@app.get("/api/system/update/status")
+async def get_system_update_status():
+    return {"success": True, **update_manager.status()}
+
+
+@app.post("/api/system/update/check")
+async def check_system_update():
+    return await update_manager.trigger_check()
 
 @app.get("/api/logs")
 async def get_logs():

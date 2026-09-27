@@ -57,9 +57,8 @@ DEFAULT_CONFIG = {
     },
     "schedule": {
         "auto_mode": True,
-        "max_posts_per_day": 3,
+        "max_posts_per_day": 1,
         "post_time_slots": ["08:00", "11:30", "19:30"],
-        "scan_interval_minutes": 60,
         "min_delay_between_posts_minutes": 180
     },
     "browser": {

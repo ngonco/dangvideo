@@ -241,7 +241,7 @@ class TikTokPoster(BasePoster):
 
     async def _set_time_picker(self, page: Page, native: Dict[str, Any]) -> bool:
         hour = f"{int(native['hour']):02d}" if int(native["hour"]) >= 10 else str(int(native["hour"]))
-        # Picker dùng '10' và '00' (không zero-pad giờ 1–9 trên một số bản UI; record dùng 10)
+        # Picker uses non-padded hours on some TikTok Studio variants.
         hour_txt = str(int(native["hour"]))
         min_txt = f"{int(native['minute']):02d}"
 
@@ -265,7 +265,9 @@ class TikTokPoster(BasePoster):
                     const t = (el.innerText || '').trim();
                     return t === hourTxt || t === padded;
                 });
-                if (hit) { (hit.closest('.tiktok-timepicker-option-item') || hit).click(); return true; }
+                // The closest option-item can wrap the entire wheel. Clicking it
+                // advances the wheel instead of selecting the requested value.
+                if (hit) { hit.click(); return true; }
                 return false;
             }""",
             hour_txt,
@@ -277,7 +279,7 @@ class TikTokPoster(BasePoster):
                     '.tiktok-timepicker-option-text.tiktok-timepicker-right'
                 ));
                 const hit = els.find(el => (el.innerText || '').trim() === minTxt);
-                if (hit) { (hit.closest('.tiktok-timepicker-option-item') || hit).click(); return true; }
+                if (hit) { hit.click(); return true; }
                 return false;
             }""",
             min_txt,
@@ -313,6 +315,21 @@ class TikTokPoster(BasePoster):
         ok = want in blob or f"{int(native['hour'])}:{int(native['minute']):02d}" in blob
         logger.info(f"TikTok picker values={vals} want={want} ok={ok}", "TIKTOK")
         return bool(ok)
+
+    async def _configure_schedule_picker(self, page: Page, native: Dict[str, Any]) -> bool:
+        time_ok = await self._set_time_picker(page, native)
+        date_ok = await self._set_date_picker(page, native)
+        await self._dismiss_schedule_pickers(page)
+        time_matches = await self._picker_shows_time(page, native)
+        if not time_matches:
+            logger.warning(
+                f"Giờ hẹn TikTok chưa khớp {native['time']} — chọn lại time picker.",
+                "TIKTOK",
+            )
+            time_ok = await self._set_time_picker(page, native)
+            await self._dismiss_schedule_pickers(page)
+            time_matches = await self._picker_shows_time(page, native)
+        return bool(time_ok and date_ok and time_matches)
 
     async def _handle_continue_to_post(self, page: Page) -> bool:
         """Hộp 'Continue to post?' ngoài dự kiến — bấm Post now trong dialog (xác nhận lịch đã chọn)."""
@@ -639,16 +656,14 @@ class TikTokPoster(BasePoster):
                     goal=SCHEDULE_GOAL,
                 )
 
-            time_ok = await self._set_time_picker(page, native)
-            date_ok = await self._set_date_picker(page, native)
-            await self._dismiss_schedule_pickers(page)
-            if not await self._picker_shows_time(page, native):
-                logger.warning("Giờ hẹn TikTok chưa khớp 10:00 — chọn lại time picker.", "TIKTOK")
-                time_ok = await self._set_time_picker(page, native)
-                await self._dismiss_schedule_pickers(page)
-            if not (time_ok and date_ok):
+            if not await self._configure_schedule_picker(page, native):
                 await self._shot(page, "tt_picker_fail")
-                logger.warning("TikTok picker Date/Time chưa chắc chắn — vẫn thử bấm Lên lịch nếu radio đã bật.", "TIKTOK")
+                return await fail_with_ai(
+                    page,
+                    "tiktok",
+                    f"Không xác nhận được giờ hẹn TikTok {native['label']}; không bấm Lên lịch để tránh đăng sai giờ.",
+                    goal=SCHEDULE_GOAL,
+                )
 
             logger.info(f"Cài đặt Lên lịch TikTok: {native['label']} công khai.", "TIKTOK")
 

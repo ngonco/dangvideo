@@ -13,6 +13,7 @@ Sau khi tải mã nguồn hoặc bản phát hành:
 - 📌 Xuất hiện biểu tượng **System Tray Icon** ở khay hệ thống (góc phải dưới màn hình).
 - 🖱️ **Click đúp vào Tray Icon** để mở lại giao diện bất kỳ lúc nào.
 - 🖱️ **Chuột phải vào Tray Icon** để mở Menu: *Mở Bảng Điều Khiển*, *Khởi Động Cùng Windows*, *Kiểm Tra Cập Nhật*, *Thoát*.
+- 🔄 Từ bản `v1.12.0`, cập nhật luôn bật: ứng dụng tự tải bản GitHub Release đã xác minh SHA-256 và cài ở lần mở tiếp theo.
 
 ---
 
@@ -48,7 +49,7 @@ powershell -ExecutionPolicy Bypass -Command "Invoke-RestMethod https://raw.githu
    - **Facebook Reels**: Feed dialog, Only me.
    - **Instagram Reels**: Native FileChooser, đóng dialog Reels notice, chia sẻ bài đăng.
 5. **Tự Động Khởi Động Cùng Windows (Auto-Start)**:
-   - Tự động chạy ngầm cùng Windows để đảm bảo lịch đăng giờ vàng.
+   - Tự động chạy ngầm cùng Windows, kiểm tra đăng ngay khi mở app và thử lại mỗi 30 phút nếu hôm nay chưa đăng thành công.
 6. **Tự Động Dọn Dẹp Video Cũ Sau 2 Ngày**:
    - Tự dọn dẹp các file `.mp4` cũ trong `downloads/` mà vẫn bảo toàn 100% lịch sử và đường dẫn bài đăng.
 

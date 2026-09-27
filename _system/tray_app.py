@@ -33,6 +33,7 @@ from PIL import Image, ImageDraw
 from core.logger import logger
 from core.config_manager import ROOT_DIR, SYSTEM_DIR
 from core.autostart_manager import autostart_mgr
+from core.update_manager import update_manager
 
 # Base directory
 sys.path.insert(0, SYSTEM_DIR)
@@ -57,6 +58,53 @@ SAFE_LOGGING_CONFIG = {
         "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
     },
 }
+
+
+class SingleInstanceGuard:
+    """Windows named mutex that prevents duplicate dashboard/server processes."""
+
+    ERROR_ALREADY_EXISTS = 183
+
+    def __init__(self):
+        self.handle = None
+        self.already_running = False
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+            name = "Local\\AutoVideoPro-SingleInstance-v1"
+            self.handle = ctypes.windll.kernel32.CreateMutexW(None, False, name)
+            self.already_running = ctypes.windll.kernel32.GetLastError() == self.ERROR_ALREADY_EXISTS
+        except Exception:
+            self.handle = None
+            self.already_running = False
+
+    def close(self):
+        if self.handle and os.name == "nt":
+            try:
+                import ctypes
+                ctypes.windll.kernel32.CloseHandle(self.handle)
+            except Exception:
+                pass
+            self.handle = None
+
+
+def wait_for_update_handoff(timeout: float = 90.0):
+    """Do not compete with the helper while it is replacing the executable."""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:8000/api/system/version",
+                headers={"User-Agent": "AutoVideoPro-Handoff"},
+            )
+            with urllib.request.urlopen(req, timeout=1.0) as response:
+                if response.status == 200:
+                    webbrowser.open("http://127.0.0.1:8000")
+                    return
+        except Exception:
+            pass
+        time.sleep(0.75)
 
 class TrayApplication:
     def __init__(self):
@@ -224,5 +272,24 @@ class TrayApplication:
         self.icon.run()
 
 if __name__ == "__main__":
-    app_tray = TrayApplication()
-    app_tray.run()
+    is_post_update = "--post-update" in sys.argv
+    handoff_state = update_manager.recover_stale_applying() if not is_post_update else "none"
+    if handoff_state == "active":
+        wait_for_update_handoff()
+        raise SystemExit(0)
+
+    instance_guard = SingleInstanceGuard()
+    if instance_guard.already_running:
+        webbrowser.open("http://127.0.0.1:8000")
+        instance_guard.close()
+        raise SystemExit(0)
+
+    if update_manager.launch_pending_installer():
+        instance_guard.close()
+        raise SystemExit(0)
+
+    try:
+        app_tray = TrayApplication()
+        app_tray.run()
+    finally:
+        instance_guard.close()

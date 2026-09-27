@@ -436,6 +436,69 @@ class HatBuiNhoCrawler:
         cleaned = re.sub(r'[✅📝✨🎉💡👉📌▼▲🥰🧠]', '', cleaned)
         return cleaned.strip()
 
+    def _source_media_key(self, version_info: Dict[str, Any]) -> str:
+        """Định danh ổn định cho từng lần render media trên HatBuiNho."""
+        media_url = str(version_info.get("media_url") or "").split("?")[0].strip()
+        if media_url:
+            timestamp = re.search(r"(\d{8}_\d{6})", media_url)
+            if timestamp:
+                return f"media:{timestamp.group(1)}"
+            return media_url
+        order_id = str(version_info.get("order_id") or "").strip()
+        filename = str(version_info.get("suggested_filename") or "").strip()
+        return f"order:{order_id}|file:{filename}" if order_id or filename else ""
+
+    def _media_created_at(self, source_media_key: str) -> Optional[datetime]:
+        match = re.search(r"(\d{8}_\d{6})", source_media_key or "")
+        if not match:
+            return None
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
+        except ValueError:
+            return None
+
+    def _legacy_record_matches_media(self, video: Dict[str, Any], source_media_key: str) -> bool:
+        """Ghép bản ghi cũ với media chỉ khi ngày render không mới hơn ngày đã tải."""
+        media_created = self._media_created_at(source_media_key)
+        if not media_created:
+            return True
+
+        for field in ("created_date_str", "downloaded_at"):
+            raw = str(video.get(field) or "").replace("T", " ").split(".")[0]
+            try:
+                known = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+                return media_created.date() <= known.date()
+            except ValueError:
+                continue
+        return False
+
+    def _get_existing_video_state(
+        self,
+        item_hash: str,
+        raw_script: str,
+        source_media_key: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Phân biệt phiên bản mới với đúng phiên bản cũ còn thiếu kênh."""
+        existing_video = db.get_video_by_source_media_key(source_media_key)
+        if not existing_video:
+            legacy_video = db.get_legacy_video_by_content(item_hash, raw_script)
+            if legacy_video and self._legacy_record_matches_media(legacy_video, source_media_key):
+                existing_video = legacy_video
+                db.set_source_media_key(existing_video["id"], source_media_key)
+        if not existing_video:
+            return None
+
+        platforms_cfg = config_mgr.get("platforms", {}) or {}
+        required_platforms = {
+            name for name, cfg in platforms_cfg.items()
+            if isinstance(cfg, dict) and cfg.get("enabled", False)
+        }
+        successful_platforms = set(db.get_successful_platforms_for_video(existing_video["id"]))
+        return {
+            "video": existing_video,
+            "missing_platforms": sorted(required_platforms - successful_platforms),
+        }
+
     def _extract_clean_first_sentence(self, script_text: str, max_length: int = 85) -> str:
         """Trích câu đầu tiên hoàn chỉnh, ngắt chuẩn theo từ ngữ không bao giờ bị cắt cụt từ"""
         if not script_text:
@@ -640,13 +703,7 @@ class HatBuiNhoCrawler:
                     raw_script = self._clean_script_text(summary_text)
                     item_hash = hashlib.md5(raw_script.encode('utf-8')).hexdigest()[:12]
 
-                    # LỚP 1: CHẶN TRÙNG TRƯỚC KHI TẢI (KIỂM TRA DB THEO HASH HOẶC KỊCH BẢN)
-                    if not force_repost and db.is_video_already_processed(item_hash, raw_script):
-                        logger.info(
-                            f"[CHẶN TRÙNG LỚP 1] Bỏ qua video #{idx+1} (hash: {item_hash}, '{raw_script[:40]}...') vì đã có trong kho/lịch sử đăng.",
-                            "HATBUINHO"
-                        )
-                        continue
+                    recovery_video = None
 
                     logger.info(f"Xử lý video #{idx+1} ({'Ép đăng lại / Video mới nhất' if use_latest else 'Chưa tải xuống'}): '{raw_script[:60]}...'", "HATBUINHO")
 
@@ -654,6 +711,71 @@ class HatBuiNhoCrawler:
                     if version_info is None:
                         logger.warning(f"Bỏ qua video #{idx+1} vì tệp trên máy chủ không còn khả dụng (404).", "HATBUINHO")
                         continue
+
+                    source_media_key = self._source_media_key(version_info)
+                    source_created = self._media_created_at(source_media_key)
+
+                    # Chỉ so trùng sau khi biết đúng phiên bản media. Cùng kịch bản nhưng
+                    # HatBuiNho render ngày khác là một video mới và phải được tải/đăng.
+                    if not force_repost:
+                        existing_state = self._get_existing_video_state(
+                            item_hash, raw_script, source_media_key
+                        )
+                        if existing_state:
+                            existing_video = existing_state["video"]
+                            missing_platforms = existing_state["missing_platforms"]
+
+                            if not missing_platforms:
+                                logger.info(
+                                    f"[CHẶN TRÙNG LỚP 1] Phiên bản media của video #{idx+1} trùng DB "
+                                    f"#{existing_video['id']} và đã hoàn tất tất cả kênh. Không đăng lại.",
+                                    "HATBUINHO",
+                                )
+                                try:
+                                    await page.evaluate("""() => {
+                                        const m = document.getElementById('download_reminder_modal');
+                                        if (m) m.classList.add('hidden');
+                                    }""")
+                                except Exception:
+                                    pass
+                                continue
+
+                            existing_path = existing_video.get("file_path") or ""
+                            if existing_path and os.path.isfile(existing_path):
+                                db.update_video_file_path(
+                                    existing_video["id"], existing_path,
+                                    os.path.getsize(existing_path), "downloaded"
+                                )
+                                downloaded_videos.append(db.get_video_by_id(existing_video["id"]))
+                                count += 1
+                                logger.info(
+                                    f"Phiên bản DB #{existing_video['id']} còn thiếu "
+                                    f"{', '.join(p.upper() for p in missing_platforms)}; "
+                                    "file vẫn còn nên đã đưa lại vào hàng đợi.",
+                                    "HATBUINHO",
+                                )
+                                try:
+                                    await page.evaluate("""() => {
+                                        const m = document.getElementById('download_reminder_modal');
+                                        if (m) m.classList.add('hidden');
+                                    }""")
+                                except Exception:
+                                    pass
+                                continue
+
+                            recovery_video = existing_video
+                            logger.info(
+                                f"Phiên bản DB #{existing_video['id']} còn thiếu "
+                                f"{', '.join(p.upper() for p in missing_platforms)} và file đã bị dọn. "
+                                "Sẽ tải phục hồi để đăng nốt.",
+                                "HATBUINHO",
+                            )
+                        elif source_created:
+                            logger.info(
+                                f"Phát hiện phiên bản media mới tạo lúc "
+                                f"{source_created.strftime('%d/%m/%Y %H:%M:%S')}; sẽ tải và đăng như video mới.",
+                                "HATBUINHO",
+                            )
 
                     await asyncio.sleep(1.5)
 
@@ -731,7 +853,8 @@ class HatBuiNhoCrawler:
 
                     # LỚP 2: CHẶN TRÙNG DUNG LƯỢNG FILE (BYTE-TO-BYTE)
                     if not force_repost and file_size > 0:
-                        dup_vid = db.get_video_by_file_size(file_size)
+                        recovery_id = recovery_video["id"] if recovery_video else None
+                        dup_vid = db.get_video_by_file_size(file_size, exclude_id=recovery_id)
                         if dup_vid:
                             logger.warning(
                                 f"[CHẶN TRÙNG LỚP 2 - DUNG LƯỢNG] Tệp vừa tải có dung lượng {file_size:,} bytes trùng khớp 100% với video #{dup_vid['id']} ('{dup_vid.get('title')}') đã có trong DB. Đã xóa tệp tạm và bỏ qua không đăng lại!",
@@ -745,7 +868,12 @@ class HatBuiNhoCrawler:
                             continue
 
                     video_record = {
-                        "hatbuinho_id": item_hash if not force_repost else f"{item_hash}_{datetime.now().strftime('%H%M%S')}",
+                        "hatbuinho_id": (
+                            f"{item_hash}_{hashlib.md5(source_media_key.encode('utf-8')).hexdigest()[:8]}"
+                            if source_media_key and not recovery_video
+                            else item_hash if not force_repost
+                            else f"{item_hash}_{datetime.now().strftime('%H%M%S')}"
+                        ),
                         "title": clean_name.replace(".mp4", ""),
                         "raw_script": raw_script,
                         "suggested_title": suggested_title,
@@ -753,12 +881,28 @@ class HatBuiNhoCrawler:
                         "file_path": target_file_path,
                         "file_size": file_size,
                         "status": "downloaded",
-                        "created_date_str": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        "created_date_str": (
+                            source_created.strftime("%Y-%m-%d %H:%M:%S")
+                            if source_created else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        ),
+                        "source_media_key": source_media_key,
                     }
 
-                    # Save to DB
-                    db.add_or_update_video(video_record)
-                    downloaded_videos.append(video_record)
+                    # Save to DB. Nếu đây là video chưa hoàn tất đã bị dọn file,
+                    # khôi phục đúng bản ghi cũ để lịch sử từng kênh tiếp tục chống trùng.
+                    if recovery_video:
+                        db.update_video_file_path(
+                            recovery_video["id"], target_file_path, file_size, "downloaded"
+                        )
+                        restored = db.get_video_by_id(recovery_video["id"])
+                        downloaded_videos.append(restored or video_record)
+                        logger.success(
+                            f"Đã khôi phục video DB #{recovery_video['id']} vào hàng đợi.",
+                            "HATBUINHO",
+                        )
+                    else:
+                        db.add_or_update_video(video_record)
+                        downloaded_videos.append(video_record)
                     count += 1
 
                     # Close modal dialog

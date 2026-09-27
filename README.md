@@ -14,6 +14,8 @@ Tải file `.exe` bản mới nhất:
 2. Click đúp để chạy. Dashboard mở tại `http://127.0.0.1:8000`.
 3. Điền tài khoản HatBuiNho trên Dashboard, rồi **Mở Trình Duyệt Đăng Nhập** từng kênh (YouTube / TikTok / Facebook / Instagram) một lần.
 
+Từ bản `v1.12.0`, ứng dụng tự kiểm tra GitHub Releases, tải bản mới có SHA-256 hợp lệ và cài ở lần mở ứng dụng tiếp theo. Người đang dùng bản cũ hơn cần tải `v1.12.0` thủ công một lần.
+
 Cookie đăng nhập, `browser_profiles`, `.env`, `data.db` và mật khẩu **chỉ nằm trên máy bạn** — không đưa lên GitHub.
 
 ---
@@ -28,6 +30,7 @@ Sao chép [`_system/config.example.json`](_system/config.example.json) thành `_
 
 ## Tính năng
 
+- Tự kiểm tra để đăng ngay khi mở ứng dụng; nếu hôm nay chưa đăng thành công, tự thử lại mỗi 30 phút.
 - Hẹn native công khai **10:00 sáng mai** trên YouTube, TikTok, Facebook.
 - Instagram web: **Bài viết, Share ngay**, lấy permalink từ thanh địa chỉ.
 - Hashtag đạo lý + hashtag phổ biến do AI chọn khi tải (không chữ ký thương hiệu).

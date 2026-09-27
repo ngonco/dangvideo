@@ -1,10 +1,14 @@
 @echo off
 chcp 65001 >nul
-title Auto Video Pro - Cập Nhật Hệ Thống
+title Auto Video Pro - Cap Nhat Ma Nguon Cho Lap Trinh Vien
 
 echo ========================================================
-echo        🔄 AUTO VIDEO PRO - TỰ ĐỘNG CẬP NHẬT PHẦN MỀM
+echo        AUTO VIDEO PRO - CAP NHAT MA NGUON PHAT TRIEN
 echo ========================================================
+echo.
+
+echo File nay chi dung cho ban chay tu MA NGUON.
+echo Ban Tu_dong_dang_video.exe se tu cap nhat qua GitHub Releases.
 echo.
 
 :: 1. Kiểm tra Git
@@ -21,10 +25,10 @@ echo [1/3] Đang tải mã nguồn mới nhất từ GitHub (origin/main)...
 git pull origin main
 if %errorlevel% neq 0 (
     echo.
-    echo [CẢNH BÁO] Không thể kéo code tự động (có thể do mất mạng hoặc xung đột file).
-    echo Đang thử đồng bộ ép buộc...
-    git fetch origin main
-    git reset --hard origin/main
+    echo [LOI] Khong the keo ma nguon (co the do mat mang hoac xung dot file).
+    echo Khong tu dong ghi de thay doi dang lam.
+    pause
+    exit /b 1
 )
 
 :: 3. Cập nhật runtime Python riêng theo lockfile

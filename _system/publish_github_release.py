@@ -14,6 +14,7 @@ Khong in token GitHub.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,10 @@ FORBIDDEN_NAMES = {"tu_dong_dang_video.exe", "config.json", ".env", "data.db"}
 FORBIDDEN_PATH_PARTS = ("browser_profiles/", "browser_profiles\\")
 
 DEFAULT_NOTES = """Tai Tu_dong_dang_video.exe, click dup de chay.
+
+Tu ban v1.12.0: ung dung tu kiem tra GitHub Release, xac minh SHA-256,
+tai khi he thong ranh va cai o lan mo ung dung tiep theo.
+Nguoi dang dung ban cu hon can cai ban nay thu cong mot lan cuoi.
 
 Mac dinh: tat tieng trinh duyet Playwright; an cua so khi tai/dang.
 Dashboard co nut TAT TIENG va HIEN THI QUA TRINH DANG.
@@ -269,24 +274,47 @@ def release_exists(token: str, tag: str) -> bool:
     return code == 200
 
 
-def create_release_with_gh(tag: str, exe: str, notes: str) -> None:
+def create_sha256_file(exe: str) -> str:
+    digest = hashlib.sha256()
+    with open(exe, "rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    sha_path = exe + ".sha256"
+    with open(sha_path, "w", encoding="ascii", newline="\n") as handle:
+        handle.write(f"{digest.hexdigest()}  {os.path.basename(exe)}\n")
+    _print(f"OK SHA-256: {sha_path}")
+    return sha_path
+
+
+def create_release_with_gh(tag: str, assets: list[str], notes: str) -> None:
     cmd = [
-        "gh", "release", "create", tag, exe,
+        "gh", "release", "create", tag, *assets,
         "--repo", REPO_SLUG,
         "--title", f"{tag} — {EXE_NAME}",
         "--notes", notes,
+        "--draft",
     ]
     rc = subprocess.call(cmd, cwd=ROOT)
     if rc != 0:
         die(f"gh release create that bai (exit {rc})")
+    rc = subprocess.call([
+        "gh", "release", "edit", tag,
+        "--repo", REPO_SLUG,
+        "--draft=false",
+    ], cwd=ROOT)
+    if rc != 0:
+        die(f"Da tai file nhung khong the cong khai Release {tag} (exit {rc}).")
 
 
-def create_release_with_api(tag: str, exe: str, notes: str, token: str) -> None:
+def create_release_with_api(tag: str, assets: list[str], notes: str, token: str) -> None:
     body = json.dumps({
         "tag_name": tag,
         "name": f"{tag} — {EXE_NAME}",
         "body": notes,
-        "draft": False,
+        "draft": True,
         "prerelease": False,
         "target_commitish": REQUIRED_BRANCH,
     }).encode("utf-8")
@@ -294,23 +322,38 @@ def create_release_with_api(tag: str, exe: str, notes: str, token: str) -> None:
     if code not in (200, 201) or not isinstance(meta, dict):
         die(f"Tao GitHub Release that bai (HTTP {code}).")
     upload = str(meta.get("upload_url") or "").split("{")[0]
+    release_id = meta.get("id")
     if not upload:
         die("Release khong co upload_url.")
-    data = open(exe, "rb").read()
-    _print(f"Dang tai {EXE_NAME} ({len(data)} bytes) len Release {tag}...")
-    up_url = upload + f"?name={EXE_NAME}"
+    for asset in assets:
+        with open(asset, "rb") as handle:
+            data = handle.read()
+        name = os.path.basename(asset)
+        _print(f"Dang tai {name} ({len(data)} bytes) len Release {tag}...")
+        up_url = upload + f"?name={name}"
+        code, _ = api_request(
+            "POST",
+            up_url,
+            token,
+            data=data,
+            content_type="application/octet-stream",
+        )
+        if code not in (200, 201):
+            die(f"Tai {name} len Release that bai (HTTP {code}).")
+    if not release_id:
+        die("Release khong co id de cong khai.")
+    publish_body = json.dumps({"draft": False}).encode("utf-8")
     code, _ = api_request(
-        "POST",
-        up_url,
+        "PATCH",
+        f"https://api.github.com/repos/{REPO_SLUG}/releases/{release_id}",
         token,
-        data=data,
-        content_type="application/octet-stream",
+        data=publish_body,
     )
     if code not in (200, 201):
-        die(f"Tai exe len Release that bai (HTTP {code}).")
+        die(f"Da tai file nhung khong the cong khai Release {tag} (HTTP {code}).")
 
 
-def publish_release(tag: str, exe: str, notes: str) -> None:
+def publish_release(tag: str, assets: list[str], notes: str) -> None:
     _print("=== GitHub Release ===")
     token = github_token()
     if release_exists(token, tag):
@@ -318,11 +361,11 @@ def publish_release(tag: str, exe: str, notes: str) -> None:
     gh = shutil_which("gh")
     if gh:
         try:
-            create_release_with_gh(tag, exe, notes)
+            create_release_with_gh(tag, assets, notes)
             return
         except Exception:
             _print("gh khong dung duoc, chuyen sang GitHub API.")
-    create_release_with_api(tag, exe, notes, token)
+    create_release_with_api(tag, assets, notes, token)
 
 
 def shutil_which(name: str) -> str | None:
@@ -357,8 +400,9 @@ def main() -> None:
         _print(f"Tu tang VERSION -> {ver} (tag {tag}) truoc khi dong goi.")
     _print(f"Phat hanh {tag} cho {REPO_SLUG}")
     exe = build_exe()
+    sha_file = create_sha256_file(exe)
     commit_and_push(tag)
-    publish_release(tag, exe, args.notes.strip() + "\n")
+    publish_release(tag, [exe, sha_file], args.notes.strip() + "\n")
     _print("")
     _print("XONG. User tai exe tai:")
     _print("  " + LATEST_URL)

@@ -8,6 +8,9 @@ from core.config_manager import config_mgr
 from core.database import db
 from automation.workflow_manager import workflow_mgr
 
+DAILY_POST_CHECK_INTERVAL_MINUTES = 30
+
+
 class TaskScheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
@@ -18,7 +21,11 @@ class TaskScheduler:
             self.reload_jobs()
             self.scheduler.start()
             self.is_running = True
-            logger.info("Đã khởi động Trình Lên Lịch Tự Động (Background Scheduler).", "SCHEDULER")
+            logger.info(
+                "Đã khởi động tự động đăng: kiểm tra ngay khi mở ứng dụng, "
+                f"sau đó mỗi {DAILY_POST_CHECK_INTERVAL_MINUTES} phút cho tới khi hôm nay đã đăng video.",
+                "SCHEDULER",
+            )
             # Run cleanup check on startup
             asyncio.create_task(self._scheduled_cleanup())
 
@@ -30,31 +37,23 @@ class TaskScheduler:
 
     def reload_jobs(self):
         self.scheduler.remove_all_jobs()
-        sched_cfg = config_mgr.get("schedule", {})
-        scan_interval = sched_cfg.get("scan_interval_minutes", 60)
-        time_slots = sched_cfg.get("post_time_slots", ["08:00", "11:30", "19:30"])
 
-        # Periodic scan job
+        # Kiểm tra ngay khi app mở/reload cấu hình, rồi lặp lại mỗi 30 phút.
+        # post_time_slots chỉ còn dùng để chọn giờ công khai native gần nhất.
         self.scheduler.add_job(
-            self._scheduled_scan_and_post_check,
-            trigger=IntervalTrigger(minutes=scan_interval),
-            id="periodic_scan_job",
-            replace_existing=True
+            self._scheduled_daily_post_check,
+            trigger=IntervalTrigger(minutes=DAILY_POST_CHECK_INTERVAL_MINUTES),
+            next_run_time=datetime.now(),
+            id="daily_post_opportunity_job",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=None,
         )
-
-        # Golden hours cron jobs
-        for slot in time_slots:
-            try:
-                hour, minute = slot.strip().split(":")
-                self.scheduler.add_job(
-                    self._scheduled_slot_trigger,
-                    trigger=CronTrigger(hour=int(hour), minute=int(minute)),
-                    id=f"slot_job_{hour}_{minute}",
-                    replace_existing=True
-                )
-                logger.info(f"Đã lập lịch đăng tự động vào khung giờ: {slot}", "SCHEDULER")
-            except Exception as e:
-                logger.warning(f"Lỗi khi cài đặt lịch khung giờ '{slot}': {e}", "SCHEDULER")
+        logger.info(
+            f"Đã lập lịch kiểm tra cơ hội đăng ngay bây giờ và mỗi {DAILY_POST_CHECK_INTERVAL_MINUTES} phút.",
+            "SCHEDULER",
+        )
 
         # Daily auto-cleanup job at 00:05 midnight
         self.scheduler.add_job(
@@ -97,34 +96,34 @@ class TaskScheduler:
         else:
             logger.info("Không có tệp video cũ nào cần dọn dẹp.", "CLEANUP")
 
-    async def _scheduled_slot_trigger(self):
-        """Kích hoạt đăng bài tự động khi chạm đúng khung giờ vàng"""
+    async def _scheduled_daily_post_check(self):
+        """Đăng ngay khi có cơ hội nếu hôm nay chưa có video thành công."""
         sched_cfg = config_mgr.get("schedule", {})
         if not sched_cfg.get("auto_mode", False):
             return
 
-        logger.info("⏰ Khung giờ vàng đã đến! Kiểm tra video để đăng tự động...", "SCHEDULER")
+        if db.has_successful_video_today():
+            logger.info("Hôm nay đã đăng video thành công. Bỏ qua lần kiểm tra này.", "SCHEDULER")
+            return
+
+        if workflow_mgr.is_busy:
+            logger.info(
+                f"Hôm nay chưa đăng video nhưng hệ thống đang bận. Sẽ thử lại sau {DAILY_POST_CHECK_INTERVAL_MINUTES} phút.",
+                "SCHEDULER",
+            )
+            return
+
+        logger.info("Hôm nay chưa đăng video. Bắt đầu đăng tự động ngay khi có cơ hội...", "SCHEDULER")
         await self._auto_process_next_video()
 
-    async def _scheduled_scan_and_post_check(self):
-        """Quét định kỳ từ HatBuiNho (bỏ qua video tạo hôm nay)"""
-        sched_cfg = config_mgr.get("schedule", {})
-        if not sched_cfg.get("auto_mode", False):
-            return
-
-        logger.info("Bắt đầu quét định kỳ video mới từ hatbuinho.com...", "SCHEDULER")
-        await workflow_mgr.scan_and_download(max_items=2, exclude_today=True)
-
     async def _auto_process_next_video(self):
-        sched_cfg = config_mgr.get("schedule", {})
-        max_today = sched_cfg.get("max_posts_per_day", 10)
-        stats = db.get_stats()
-
-        if stats["posts_today"] >= max_today:
-            logger.info(f"Đã đạt giới hạn đăng trong ngày ({stats['posts_today']}/{max_today} video). Tạm hoãn đợt đăng tiếp theo.", "SCHEDULER")
+        # Kiểm tra lại ngay trước khi lấy video để tránh chạy trùng với thao tác thủ công.
+        if db.has_successful_video_today():
+            logger.info("Hôm nay vừa có video đăng thành công. Không tạo thêm lượt đăng tự động.", "SCHEDULER")
             return
 
         # Mỗi lần kích hoạt chỉ 1 video — không bù hàng loạt khi máy vừa mở lại
+        sched_cfg = config_mgr.get("schedule", {})
         min_delay = int(sched_cfg.get("min_delay_between_posts_minutes", 180) or 180)
         last_ig = db.get_last_success_at("instagram")
         if last_ig:
@@ -140,18 +139,35 @@ class TaskScheduler:
         # 1. Tìm video chưa đăng cũ nhất trong kho hàng đợi (FIFO)
         pending_video = db.get_oldest_pending_video()
 
-        # 2. Nếu trong kho chưa có video -> Quét tải đúng 1 video cũ nhất từ HatBuiNho (chỉ tải video từ hôm qua trở về trước)
+        # 2. Nếu kho trống, lấy video "Chưa tải xuống" cũ nhất trong tab Đã xong.
+        # HatBuiNho đã đánh dấu Đã xong thì video tạo hôm nay cũng đủ điều kiện đăng.
         if not pending_video:
-            logger.info("Kho hàng đợi đang rỗng, tiến hành quét tải 1 video 'Chưa tải xuống' cũ nhất từ HatBuiNho (lọc an toàn: bỏ qua video tạo hôm nay)...", "SCHEDULER")
-            new_vids = await workflow_mgr.scan_and_download(max_items=1, force_latest=False, oldest_first=True, exclude_today=True)
+            logger.info(
+                "Kho hàng đợi đang rỗng, tiến hành quét tải 1 video 'Chưa tải xuống' "
+                "cũ nhất trong tab Đã xong của HatBuiNho...",
+                "SCHEDULER",
+            )
+            new_vids = await workflow_mgr.scan_and_download(
+                max_items=1,
+                force_latest=False,
+                oldest_first=True,
+                exclude_today=False,
+            )
             if new_vids:
                 pending_video = db.get_oldest_pending_video()
 
         if pending_video:
             v_title = pending_video.get("suggested_title") or pending_video.get("title")
-            logger.info(f"🚀 Tự động đăng video #{pending_video['id']}: '{v_title}'...", "SCHEDULER")
+            logger.info(f"Tự động đăng video #{pending_video['id']}: '{v_title}'...", "SCHEDULER")
             await workflow_mgr.publish_video_to_platforms(pending_video["id"], enforce_ig_gap=True)
+            if db.has_successful_video_today():
+                logger.success("Đã hoàn thành lượt đăng video tự động của hôm nay.", "SCHEDULER")
+            else:
+                logger.warning(
+                    f"Lượt đăng chưa có kênh nào thành công. Sẽ thử lại sau {DAILY_POST_CHECK_INTERVAL_MINUTES} phút.",
+                    "SCHEDULER",
+                )
         else:
-            logger.info("Hiện không có video hợp lệ (từ hôm qua trở về trước) cần đăng trên HatBuiNho.", "SCHEDULER")
+            logger.info("Hiện không có video 'Chưa tải xuống' hợp lệ cần đăng trên HatBuiNho.", "SCHEDULER")
 
 task_scheduler = TaskScheduler()

@@ -18,6 +18,7 @@ async function initApp() {
     setupEventListeners();
     connectWebSocket();
     await fetchSystemVersion();
+    await fetchUpdateStatus();
     await fetchConfigAndState();
     await fetchQueueSummary();
     await fetchQueueVideos();
@@ -39,6 +40,9 @@ async function initApp() {
         fetchQueueSummary();
         fetchQueueVideos();
     }, 30000);
+
+    // Theo dõi tiến độ tải bản cập nhật nền.
+    setInterval(fetchUpdateStatus, 5000);
 }
 
 // --------------------------------------------------------------------------
@@ -247,7 +251,7 @@ function updateHeroUI(autoRunning) {
         heroBox.classList.remove('paused');
         heroIcon.innerText = '🟢';
         heroTitle.innerText = 'HỆ THỐNG ĐANG TỰ ĐỘNG ĐĂNG VIDEO';
-        heroDesc.innerText = 'Đang tự động chạy ngầm theo các khung giờ hẹn bên dưới. Khi bật laptop là máy tự chạy.';
+        heroDesc.innerText = 'Kiểm tra ngay khi mở ứng dụng và mỗi 30 phút cho tới khi hôm nay đã đăng video.';
 
         btnToggle.classList.remove('is-paused');
         btnIcon.innerText = '⏸️';
@@ -461,9 +465,9 @@ async function fetchQueueSummary() {
         if (textElem && data.success && data.queue) {
             const { total_pending, estimated_days } = data.queue;
             if (total_pending > 0) {
-                textElem.innerHTML = `<b style="color: var(--tea-green); font-size: 15px;">${total_pending} video</b> đang chờ trong kho (Dự kiến tự động đăng trong <b style="color: var(--warm-orange);">${estimated_days} ngày</b> tới theo các mốc giờ)`;
+                textElem.innerHTML = `<b style="color: var(--tea-green); font-size: 15px;">${total_pending} video</b> đang chờ trong kho (Dự kiến tự động đăng trong <b style="color: var(--warm-orange);">${estimated_days} ngày</b>, mỗi ngày 1 video)`;
             } else {
-                textElem.innerHTML = `Kho đang trống (0 video). Hệ thống sẽ tự động quét tải video 'Chưa tải xuống' cũ nhất khi đến giờ hẹn.`;
+                textElem.innerHTML = `Kho đang trống (0 video). Hệ thống sẽ tự động quét video hợp lệ ngay khi kiểm tra cơ hội đăng.`;
             }
         }
     } catch (e) {
@@ -1554,15 +1558,57 @@ async function performUpdate() {
     btn.innerText = '⏳ Đang kiểm tra...';
     showToast('🔄 Đang kết nối GitHub kiểm tra cập nhật...', 'info');
     try {
-        const res = await fetch('/api/system/update', { method: 'POST' });
+        const res = await fetch('/api/system/update/check', { method: 'POST' });
         const data = await res.json();
-        showToast(data.message || 'Hoàn tất kiểm tra cập nhật.', 'success');
-        await fetchSystemVersion();
+        showToast(data.message || 'Đã bắt đầu kiểm tra cập nhật.', data.success === false ? 'warn' : 'info');
+        await fetchUpdateStatus();
     } catch (e) {
         showToast('❌ Không thể cập nhật từ GitHub.', 'error');
     } finally {
-        btn.disabled = false;
-        btn.innerText = '🔄 Kiểm Tra & Cập Nhật';
+        const state = await fetchUpdateStatus();
+        if (!['checking', 'downloading'].includes(state || '')) {
+            btn.disabled = false;
+            btn.innerText = '🔄 Kiểm Tra Ngay';
+        }
+    }
+}
+
+async function fetchUpdateStatus() {
+    try {
+        const res = await fetch('/api/system/update/status');
+        const data = await res.json();
+        const status = document.getElementById('updateStatus');
+        const progress = document.getElementById('updateProgress');
+        const btn = document.getElementById('btnCheckUpdate');
+        const labels = {
+            idle: '🔄 Sẵn sàng kiểm tra cập nhật tự động',
+            checking: '🔎 Đang kiểm tra bản mới trên GitHub...',
+            available: '📦 Đã tìm thấy bản mới',
+            deferred: '⏳ Đã tìm thấy bản mới, đang chờ hệ thống rảnh',
+            downloading: '⬇️ Đang tải bản cập nhật',
+            ready: '✅ Bản mới đã sẵn sàng — sẽ cài ở lần mở ứng dụng tiếp theo',
+            up_to_date: '✅ Ứng dụng đang ở phiên bản mới nhất',
+            error: '⚠️ Cập nhật chưa thành công; ứng dụng hiện tại vẫn an toàn',
+            source_mode: '🛠️ Chế độ mã nguồn — không tự thay file .exe'
+        };
+        if (status) {
+            status.innerText = data.message || labels[data.state] || 'Đang đọc trạng thái cập nhật...';
+        }
+        if (progress) {
+            const visible = data.state === 'downloading';
+            progress.style.display = visible ? 'block' : 'none';
+            progress.value = Number(data.progress || 0);
+        }
+        if (btn) {
+            const active = ['checking', 'downloading'].includes(data.state);
+            btn.disabled = active;
+            btn.innerText = active
+                ? (data.state === 'downloading' ? `⬇️ Đang tải ${Number(data.progress || 0)}%` : '⏳ Đang kiểm tra...')
+                : '🔄 Kiểm Tra Ngay';
+        }
+        return data.state;
+    } catch (e) {
+        return null;
     }
 }
 
