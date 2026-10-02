@@ -13,6 +13,39 @@ class YouTubePoster(BasePoster):
     def __init__(self):
         super().__init__("YouTube")
 
+    async def _resume_matching_draft(self, page: Page, title: str, file_path: str) -> bool:
+        """Reuse a draft only after its title and original filename both match."""
+        channel = re.search(r"(https://studio\.youtube\.com/channel/[^/?#]+)", page.url)
+        if not channel:
+            return False
+        await page.goto(channel.group(1) + "/videos/short", wait_until="domcontentloaded", timeout=45000)
+        try:
+            await page.locator('ytcp-video-row').first.wait_for(state="visible", timeout=20000)
+        except Exception:
+            body = await page.locator('body').inner_text()
+            if re.search(r'no (?:videos|content)|upload your first|chưa có video|không có video', body, re.I):
+                return False
+            raise
+        rows = page.locator('ytcp-video-row')
+        for index in range(await rows.count()):
+            row = rows.nth(index)
+            candidate = await row.locator('#video-title').inner_text()
+            visibility = await row.locator('.tablecell-visibility').inner_text()
+            if candidate.strip() != title or not re.search(r"draft|bản nháp", visibility, re.I):
+                continue
+            await row.locator('#video-title').evaluate('el => el.click()')
+            dialog = page.locator('ytcp-uploads-dialog')
+            await dialog.locator('#title-textarea #textbox').wait_for(state="visible", timeout=15000)
+            filename = os.path.basename(file_path)
+            if filename in {line.strip() for line in (await dialog.inner_text()).splitlines()}:
+                logger.info(f"Tiếp tục bản nháp YouTube đúng tệp '{filename}', không tải lại.", "YOUTUBE")
+                return True
+            await dialog.locator('#ytcp-uploads-dialog-close-button').evaluate(
+                'el => (el.querySelector("button") || el).click()'
+            )
+            await asyncio.sleep(1)
+        return False
+
     def _clean_title(self, raw_title: str) -> str:
         """Làm sạch tiêu đề, giữ nguyên câu từ hoàn chỉnh và gắn #Shorts"""
         if not raw_title:
@@ -53,7 +86,7 @@ class YouTubePoster(BasePoster):
                 };
                 const roots = Array.from(document.querySelectorAll(
                     'ytcp-uploads-dialog, ytcp-video-upload-progress, ytcp-video-share-dialog'
-                )).filter(visible);
+                )).filter(root => visible(root) || Array.from(root.querySelectorAll('ytcp-dialog, [role="dialog"]')).some(visible));
                 if (!roots.length) return '';
 
                 const normalize = (value) => {
@@ -109,7 +142,7 @@ class YouTubePoster(BasePoster):
         except Exception:
             return False
 
-    async def _verify_in_shorts_content(self, page: Page, title: str) -> str:
+    async def _verify_in_shorts_content(self, page: Page, title: str, expected_url: str = "") -> str:
         """Xác nhận dự phòng khi Studio không hiện share dialog sau khi Schedule."""
         try:
             match = re.search(r"(https://studio\.youtube\.com/channel/[^/?#]+)", page.url)
@@ -124,18 +157,22 @@ class YouTubePoster(BasePoster):
                     title: (titleEl?.innerText || titleEl?.textContent || '').trim(),
                     href: link?.href || '',
                     text: (row.innerText || '').trim(),
+                    visibility: (row.querySelector('.tablecell-visibility')?.innerText || '').trim(),
                 };
             }).filter(x => x.title && x.href)""")
-            wanted = re.sub(r"\s+", " ", (title or "").replace("#Shorts", "")).strip().lower()[:28]
+            wanted = re.sub(r"\s+", " ", (title or "").replace("#Shorts", "")).strip().lower()
             for row in rows:
                 candidate = re.sub(r"\s+", " ", (row.get("title") or "").replace("#Shorts", "")).strip().lower()
-                if wanted and wanted not in candidate:
+                if not wanted or wanted != candidate:
                     continue
-                if "draft" in (row.get("text") or "").lower():
+                if not re.fullmatch(r'scheduled|public|đã lên lịch|công khai|lên lịch', row.get('visibility', ''), re.I):
                     continue
                 video_id = re.search(r"/video/([A-Za-z0-9_-]{8,15})", row.get("href") or "")
                 if video_id:
-                    return f"https://youtube.com/shorts/{video_id.group(1)}"
+                    url = f"https://youtube.com/shorts/{video_id.group(1)}"
+                    if expected_url and url != expected_url:
+                        continue
+                    return url
         except Exception as exc:
             logger.warning(f"Không xác nhận được video trong Channel content: {exc}", "YOUTUBE")
         return ""
@@ -262,25 +299,22 @@ class YouTubePoster(BasePoster):
                 logger.success("🎉 Đã phát hiện đăng nhập YouTube thành công! Tiếp tục tiến trình đăng video...", "YOUTUBE")
                 await asyncio.sleep(2)
 
-            # Click Create / TẠO button
-            logger.info("Tìm nút Tạo / Create trên YouTube Studio...", "YOUTUBE")
-            create_btn = page.locator('button#create-icon, ytcp-button#create-icon, button:has-text("CREATE"), button:has-text("TẠO"), button:has-text("Create"), button:has-text("Tạo")').first
-            await create_btn.wait_for(state="visible", timeout=20000)
-            await create_btn.evaluate("el => el.click()")
-            await asyncio.sleep(1.5)
-
-            # Click Upload videos / Tải video lên
-            upload_item = page.locator('tp-yt-paper-item:has-text("Upload videos"), tp-yt-paper-item:has-text("Tải video lên"), tp-yt-paper-item:has-text("Upload video")').first
-            await upload_item.wait_for(state="visible", timeout=15000)
-            await upload_item.evaluate("el => el.click()")
-            await asyncio.sleep(2)
-
-            # Attach video file
-            file_input = page.locator('input[type="file"]').first
-            await file_input.wait_for(state="attached", timeout=15000)
-            await file_input.set_input_files(os.path.abspath(file_path))
-            logger.info(f"Đã đính kèm video '{os.path.basename(file_path)}' lên YouTube Studio...", "YOUTUBE")
-            await asyncio.sleep(5)
+            resumed = await self._resume_matching_draft(page, title, file_path)
+            if not resumed:
+                logger.info("Tìm nút Tạo / Create trên YouTube Studio...", "YOUTUBE")
+                create_btn = page.locator('button#create-icon, ytcp-button#create-icon, button:has-text("CREATE"), button:has-text("TẠO"), button:has-text("Create"), button:has-text("Tạo")').first
+                await create_btn.wait_for(state="visible", timeout=20000)
+                await create_btn.evaluate('el => (el.querySelector("button") || el).click()')
+                await asyncio.sleep(1.5)
+                upload_item = page.locator('tp-yt-paper-item:has-text("Upload videos"), tp-yt-paper-item:has-text("Tải video lên"), tp-yt-paper-item:has-text("Upload video")').first
+                await upload_item.wait_for(state="visible", timeout=15000)
+                await upload_item.evaluate("el => el.click()")
+                await asyncio.sleep(2)
+                file_input = page.locator('input[type="file"]').first
+                await file_input.wait_for(state="attached", timeout=15000)
+                await file_input.set_input_files(os.path.abspath(file_path))
+                logger.info(f"Đã đính kèm video '{os.path.basename(file_path)}' lên YouTube Studio...", "YOUTUBE")
+                await asyncio.sleep(5)
             limited = await self._abort_if_daily_limit(page)
             if limited:
                 return limited
@@ -298,7 +332,7 @@ class YouTubePoster(BasePoster):
                 return limited
 
             # Fill Description
-            desc_box = page.locator('div#description-textarea #textbox, #textbox[aria-label*="description"], #textbox[aria-label*="mô tả"]').first
+            desc_box = page.locator('div#description-textarea #textbox, ytcp-uploads-dialog #textbox[aria-label^="Tell viewers"], #textbox[aria-label*="description"], #textbox[aria-label*="mô tả"]').first
             if await desc_box.is_visible():
                 await desc_box.fill(description)
                 logger.info("Đã điền mô tả video.", "YOUTUBE")
@@ -388,7 +422,7 @@ class YouTubePoster(BasePoster):
                                      const t = (b.innerText || '').toLowerCase();
                                      return t.includes('next') || t.includes('tiếp');
                                  });
-                    if (nextBtn) nextBtn.click();
+                    if (nextBtn) (nextBtn.querySelector('button') || nextBtn).click();
                 }""")
                 await asyncio.sleep(2.5)
 
@@ -611,7 +645,7 @@ class YouTubePoster(BasePoster):
 
             action_name = "Lên lịch" if should_schedule else "Lưu/Xuất bản"
             logger.info(f"Bấm {action_name} video lên YouTube Shorts...", "YOUTUBE")
-            done_btn = page.locator('ytcp-button#done-button, button#done-button').first
+            done_btn = page.locator('ytcp-button#done-button button, button#done-button').first
             await done_btn.wait_for(state="visible", timeout=20000)
             done_ready = False
             for _ in range(90):
@@ -630,7 +664,7 @@ class YouTubePoster(BasePoster):
                     "url": "",
                     "error": "Nút Schedule YouTube vẫn bị khóa sau 90 giây; video còn Draft, không ghi nhận thành công.",
                 }
-            await done_btn.click(force=True)
+            await done_btn.evaluate("el => el.click()")
             
             # -------------------------------------------------------------
             # XÁC THỰC KẾT QUẢ THỰC TẾ (CHỐNG TRẠNG THÁI ẢO)
@@ -661,7 +695,7 @@ class YouTubePoster(BasePoster):
                     break
 
             if not success_confirmed:
-                verified_url = await self._verify_in_shorts_content(page, title)
+                verified_url = await self._verify_in_shorts_content(page, title, extracted_url)
                 if verified_url:
                     extracted_url = verified_url
                     success_confirmed = True

@@ -415,28 +415,8 @@ class TikTokPoster(BasePoster):
         ))
 
     def _read_os_clipboard(self) -> str:
-        import ctypes
-        try:
-            CF_UNICODETEXT = 13
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            if not user32.OpenClipboard(None):
-                return ""
-            try:
-                h_mem = user32.GetClipboardData(CF_UNICODETEXT)
-                if not h_mem:
-                    return ""
-                p_mem = kernel32.GlobalLock(h_mem)
-                if not p_mem:
-                    return ""
-                try:
-                    return (ctypes.c_wchar_p(p_mem).value or "").strip()
-                finally:
-                    kernel32.GlobalUnlock(h_mem)
-            finally:
-                user32.CloseClipboard()
-        except Exception:
-            return ""
+        from core.clipboard import read_windows_clipboard
+        return read_windows_clipboard()
 
     async def _read_clipboard(self, page: Page) -> str:
         # 1. Direct OS clipboard read (instant, 100% reliable on Windows)

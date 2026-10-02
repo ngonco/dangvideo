@@ -10,7 +10,7 @@ from core.schedule_helper import get_native_schedule
 from automation.ai_fallback import fail_with_ai, SCHEDULE_GOAL
 
 FB_PRODASH_URL = "https://www.facebook.com/professional_dashboard/"
-FB_LIBRARY_SCHEDULED = "https://www.facebook.com/professional_dashboard/content/content_library"
+FB_LIBRARY_SCHEDULED = "https://www.facebook.com/professional_dashboard/content/content_library/?filter=SCHEDULED"
 
 _EN_MON = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -280,6 +280,7 @@ class FacebookPoster(BasePoster):
         for sec in range(35):
             for sel in [
                 '#prodash-create-button',
+                '#create_post_global',
                 'div[role="main"] div[role="button"][aria-label="Create"]',
                 'div[role="main"] div[role="button"][aria-label="Tạo"]',
                 'div[role="button"]:has-text("+ Create")',
@@ -310,11 +311,14 @@ class FacebookPoster(BasePoster):
 
         for attempt in range(2):
             clicked = await page.evaluate("""() => {
-                const menu = document.getElementById('prodash_create_menu_items') || document.body;
-                const items = Array.from(menu.querySelectorAll('[role="menuitem"], div[role="button"], span'));
+                const visible = el => el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0;
+                const menu = document.getElementById('prodash_create_menu_items')
+                    || Array.from(document.querySelectorAll('[role="menu"]')).find(visible);
+                if (!menu || !visible(menu)) return false;
+                const items = Array.from(menu.querySelectorAll('[role="menuitem"], [role="button"], a')).filter(visible);
                 const hit = items.find(el => {
                     const t = (el.innerText || '').trim().toLowerCase();
-                    return t === 'reel' || t === 'thước phim' || t.startsWith('reel') || t.startsWith('thước phim');
+                    return t === 'reel' || t === 'thước phim';
                 });
                 if (hit) { hit.click(); return true; }
                 return false;
@@ -338,7 +342,73 @@ class FacebookPoster(BasePoster):
             'div[role="dialog"]:has-text("Add Video"), '
             'div[role="dialog"]:has-text("Thêm video")'
         ).first
-        return await dialog.is_visible(timeout=15000)
+        try:
+            await dialog.wait_for(state="visible", timeout=45000)
+            return True
+        except Exception:
+            return False
+
+    async def _schedule_page_reel(self, page: Page, caption: str, native: Dict[str, Any], mark_ai: bool) -> Dict[str, Any]:
+        """Facebook's file-first composer at /reels/create (October 2026)."""
+        if not native['enabled']:
+            return {"success": False, "url": "", "error": "Chưa bật lịch Facebook; không đăng ngay."}
+        editor = page.locator('[contenteditable="true"][role="textbox"][aria-placeholder*="Describe"], '
+                              '[contenteditable="true"][role="textbox"][aria-placeholder*="mô tả"]').last
+        await editor.wait_for(state="visible", timeout=45000)
+        await editor.fill(caption)
+        if (await editor.inner_text()).strip() != caption.strip():
+            return {"success": False, "url": "", "error": "Chú thích Facebook chưa khớp; không lên lịch."}
+        if mark_ai:
+            ai_row = page.get_by_role('button', name=re.compile(r'^Add AI label|^Thêm nhãn AI', re.I)).first
+            toggle = ai_row.locator('input[role="switch"]')
+            await toggle.wait_for(state="attached", timeout=5000)
+            if await toggle.get_attribute('aria-checked') != 'true':
+                await toggle.evaluate('el => el.click()')
+            if await toggle.get_attribute('aria-checked') != 'true':
+                return {"success": False, "url": "", "error": "Chưa bật được nhãn AI Facebook."}
+        public = page.get_by_role('button', name=re.compile(r'Post audience|Đối tượng.*bài viết', re.I)).first
+        if not re.search(r'Public|Công khai', await public.inner_text(), re.I):
+            return {"success": False, "url": "", "error": "Đối tượng Facebook chưa Công khai; không lên lịch."}
+        # Wait for media processing/copyright checks before configuring the final action.
+        post = page.get_by_role('button', name=re.compile(r'^(Post|Đăng)$')).last
+        for _ in range(120):
+            if await post.is_enabled():
+                break
+            await asyncio.sleep(1)
+        else:
+            return {"success": False, "url": "", "error": "Facebook chưa xử lý xong video sau 120 giây."}
+        schedule = page.get_by_role('button', name=re.compile(r'^(Schedule|Lên lịch)$')).first
+        await schedule.evaluate('el => el.click()')
+        confirm = page.get_by_role('button', name=re.compile(r'^(Schedule for later|Lên lịch sau)$')).last
+        await confirm.wait_for(state="visible", timeout=10000)
+        panel = page.locator('[role="dialog"]').filter(has=confirm).last
+        fields = panel.locator('input[role="combobox"]')
+        if await fields.count() != 2:
+            return {"success": False, "url": "", "error": "Không nhận diện đúng hai trường lịch Facebook."}
+        date_box, time_box = fields.nth(0), fields.nth(1)
+        await date_box.fill(_fb_date_label(native))
+        await date_box.press('Tab')
+        await time_box.fill(native['time'])
+        await time_box.press('Tab')
+        if await date_box.input_value() != _fb_date_label(native) or await time_box.input_value() != native['time']:
+            return {"success": False, "url": "", "error": "Ngày/giờ Facebook chưa khớp; không lên lịch."}
+        await confirm.evaluate('el => { if (el.getAttribute("aria-disabled") === "true") throw Error("Schedule disabled"); el.click(); }')
+        await confirm.wait_for(state="hidden", timeout=10000)
+        # The left Schedule button opens options; the blue right button submits.
+        submit = page.get_by_role('button', name=re.compile(r'^(Schedule Post|Schedule|Lên lịch bài viết|Lên lịch)$', re.I)).last
+        await submit.wait_for(state="visible", timeout=10000)
+        if not await submit.is_enabled():
+            return {"success": False, "url": "", "error": "Nút lên lịch Facebook chưa khả dụng."}
+        await self._shot(page, 'fb_page_before_schedule')
+        await submit.evaluate('el => el.click()')
+        await page.wait_for_url(lambda url: '/reels/create' not in url, timeout=90000)
+        logger.success(f"Facebook đã hoàn tất gửi lịch {native['label']} từ trình tạo Reel mới.", "FACEBOOK")
+        post_url = ""
+        try:
+            post_url = await self._copy_scheduled_post_link(page, caption)
+        except Exception as exc:
+            logger.warning(f"Facebook đã gửi lịch, nhưng lấy link bị lỗi: {exc}. Không đăng lại video.", "FACEBOOK")
+        return {"success": True, "url": post_url, "error": ""}
 
     async def _click_next_only(self, page: Page) -> str:
         """Chỉ bấm Next/Tiếp. Không bấm Post/Share/Schedule a post."""
@@ -752,36 +822,12 @@ class FacebookPoster(BasePoster):
         return u
 
     def _read_os_clipboard(self) -> str:
-        import ctypes
-        try:
-            CF_UNICODETEXT = 13
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            if not user32.OpenClipboard(None):
-                return ""
-            try:
-                h_mem = user32.GetClipboardData(CF_UNICODETEXT)
-                if not h_mem:
-                    return ""
-                p_mem = kernel32.GlobalLock(h_mem)
-                if not p_mem:
-                    return ""
-                try:
-                    return (ctypes.c_wchar_p(p_mem).value or "").strip()
-                finally:
-                    kernel32.GlobalUnlock(h_mem)
-            finally:
-                user32.CloseClipboard()
-        except Exception:
-            return ""
+        from core.clipboard import read_windows_clipboard
+        return read_windows_clipboard()
 
     async def _read_fb_clipboard(self, page: Page) -> str:
-        # 1. Direct OS clipboard read (instant, 100% reliable on Windows)
-        clip = self._read_os_clipboard()
-        if clip:
-            return clip
-
-        # 2. Browser clipboard with hard timeout (prevents hanging in Firefox/Camoufox).
+        # Headless Firefox writes its own clipboard, while Windows can still
+        # contain an older link. Read the browser first after a trusted click.
         # Không dùng grant_permissions: API đó không ổn định với Firefox persistent context.
         try:
             text = await asyncio.wait_for(
@@ -796,14 +842,25 @@ class FacebookPoster(BasePoster):
                 ),
                 timeout=2.5,
             )
-            return (text or "").strip()
+            if text:
+                return text.strip()
         except Exception:
-            return ""
+            pass
+        return self._read_os_clipboard()
 
     async def _open_scheduled_row_menu(self, page: Page, caption: str) -> bool:
         result = await page.evaluate(
-            """() => {
-                const nodes = Array.from(document.querySelectorAll('span, div'));
+            """(caption) => {
+                const snippet = String(caption || '').split('\\n')[0].trim().toLowerCase();
+                const rows = Array.from(document.querySelectorAll('div, tr, li')).filter(el => {
+                    const t = (el.innerText || '').toLowerCase();
+                    return snippet && t.includes(snippet) && t.length < 1500
+                        && /scheduled|đã lên lịch|tomorrow at|ngày mai lúc/.test(t)
+                        && el.querySelector('[role="button"], button');
+                }).sort((a,b) => a.innerText.length - b.innerText.length);
+                const row = rows[0];
+                if (!row) return 'no-matching-row';
+                const nodes = Array.from(row.querySelectorAll('span, div'));
                 const status = nodes.find(el => {
                     const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
                     if (t.length > 80) return false;
@@ -815,7 +872,7 @@ class FacebookPoster(BasePoster):
                 const sr = status.getBoundingClientRect();
                 if (sr.width < 4 || sr.height < 4) return 'status-hidden';
                 const midY = (sr.top + sr.bottom) / 2;
-                const btns = Array.from(document.querySelectorAll('div[role="button"], button')).filter(el => {
+                const btns = Array.from(row.querySelectorAll('div[role="button"], button')).filter(el => {
                     const r = el.getBoundingClientRect();
                     if (r.width < 12 || r.height < 12) return false;
                     const aria = (el.getAttribute('aria-label') || '').toLowerCase();
@@ -827,7 +884,7 @@ class FacebookPoster(BasePoster):
                 if (!hit) return 'no-btn';
                 hit.click();
                 return 'ok:' + (hit.getAttribute('aria-label') || hit.getAttribute('aria-haspopup') || 'dot');
-            }"""
+            }""", caption
         )
         logger.info(f"Menu ba chấm hàng Scheduled: {result}", "FACEBOOK")
         return isinstance(result, str) and result.startswith("ok:")
@@ -883,8 +940,11 @@ class FacebookPoster(BasePoster):
             item = page.get_by_role("menuitem", name=name, exact=True)
             try:
                 if await item.is_visible(timeout=2000):
-                    await item.click(force=True)
-                    return True
+                    box = await item.bounding_box()
+                    if box:
+                        # Send a trusted click without locator navigation waits.
+                        await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+                        return True
             except Exception:
                 pass
         return bool(await page.evaluate("""() => {
@@ -913,7 +973,7 @@ class FacebookPoster(BasePoster):
             # bước xác nhận vừa tải; các lần sau chỉ reload nhẹ.
             current_url = page.url
             logger.info(f"Content Library hiện tại: {current_url}", "FACEBOOK")
-            if "professional_dashboard/content/content_library" not in current_url:
+            if "professional_dashboard/content/content_library" not in current_url or "filter=SCHEDULED" not in current_url:
                 await page.goto(FB_LIBRARY_SCHEDULED, wait_until="domcontentloaded", timeout=45000)
             elif attempt > 0:
                 await page.reload(wait_until="domcontentloaded", timeout=45000)
@@ -932,9 +992,9 @@ class FacebookPoster(BasePoster):
                 continue
 
             clipboard_before = await self._read_fb_clipboard(page)
+            from core.clipboard import windows_clipboard_sequence
+            sequence_before = windows_clipboard_sequence()
             opened = await self._open_scheduled_row_menu(page, caption)
-            if not opened:
-                opened = await self._open_scheduled_row_menu(page, "")
             if not opened:
                 logger.warning("Chưa thấy nút ba chấm trên hàng bài Scheduled.", "FACEBOOK")
                 await self._shot(page, f"fb_row_menu_fail_{attempt}")
@@ -942,7 +1002,8 @@ class FacebookPoster(BasePoster):
                 continue
 
             await asyncio.sleep(1.2)
-            if not await self._click_copy_link_item(page):
+            copied = await self._click_copy_link_item(page)
+            if not copied:
                 try:
                     await page.keyboard.press("Escape")
                 except Exception:
@@ -952,12 +1013,16 @@ class FacebookPoster(BasePoster):
                 await asyncio.sleep(12)
                 continue
 
-            await asyncio.sleep(1.5)
-            url = await self._read_fb_clipboard(page)
-            if url != clipboard_before and self._is_fb_permalink(url):
-                url = self._normalize_fb_permalink(url)
-                logger.success(f"Đã Copy link Facebook: {url}", "FACEBOOK")
-                return url
+            # Facebook may show "Preparing link" before writing the clipboard.
+            for _ in range(20):
+                await asyncio.sleep(1)
+                url = await self._read_fb_clipboard(page)
+                sequence_now = windows_clipboard_sequence()
+                fresh = url != clipboard_before or (sequence_before and sequence_now != sequence_before)
+                if fresh and self._is_fb_permalink(url):
+                    url = self._normalize_fb_permalink(url)
+                    logger.success(f"Đã Copy link Facebook: {url}", "FACEBOOK")
+                    return url
 
             snippet = ((caption or "").split("\n")[0] or "").strip()[:18]
             href = await page.evaluate("""(snippet) => {
@@ -977,7 +1042,7 @@ class FacebookPoster(BasePoster):
                 href = self._normalize_fb_permalink(href)
                 logger.success(f"Đã lấy link Facebook từ DOM: {href}", "FACEBOOK")
                 return href
-            logger.warning(f"Clipboard chưa có permalink Facebook (got={url[:120]!r}).", "FACEBOOK")
+            logger.warning("Clipboard chưa có permalink Facebook của bài vừa lên lịch.", "FACEBOOK")
             await asyncio.sleep(12)
 
         await self._shot(page, "fb_copy_link_fail")
@@ -1031,7 +1096,15 @@ class FacebookPoster(BasePoster):
                 logger.error("Hết thời gian chờ đăng nhập Facebook (5 phút). Vui lòng đăng nhập trước!", "FACEBOOK")
                 return {"success": False, "error": "Hết thời gian chờ đăng nhập Facebook"}
 
-            if not await self._click_create_reel(page):
+            choosers = []
+            def capture_chooser(chooser):
+                choosers.append(chooser)
+            page.on('filechooser', capture_chooser)
+            try:
+                opened = await self._click_create_reel(page)
+            finally:
+                page.remove_listener('filechooser', capture_chooser)
+            if not opened:
                 logger.error("Không mở được Create → Reel trên Professional Dashboard.", "FACEBOOK")
                 await self._shot(page, "fb_create_reel_fail")
                 return await fail_with_ai(
@@ -1040,6 +1113,9 @@ class FacebookPoster(BasePoster):
                     goal=SCHEDULE_GOAL,
                 )
 
+            if choosers:
+                await choosers[-1].set_files(os.path.abspath(file_path))
+                logger.info("Đã chọn tệp từ menu Reel; chờ Facebook mở trình tạo mới.", "FACEBOOK")
             if not await self._reel_dialog_ready(page):
                 logger.error("Hộp thoại Create reel không hiện.", "FACEBOOK")
                 await self._shot(page, "fb_create_dialog_fail")
@@ -1049,14 +1125,17 @@ class FacebookPoster(BasePoster):
                     goal=SCHEDULE_GOAL,
                 )
 
-            file_input = page.locator(
-                'div[role="dialog"] input[type="file"][accept*="video"], '
-                'div[role="dialog"] input[type="file"]'
-            ).first
-            await file_input.wait_for(state="attached", timeout=15000)
-            await file_input.set_input_files(os.path.abspath(file_path))
+            if not choosers:
+                file_input = page.locator(
+                    'div[role="dialog"] input[type="file"][accept*="video"], '
+                    'div[role="dialog"] input[type="file"]'
+                ).first
+                await file_input.wait_for(state="attached", timeout=15000)
+                await file_input.set_input_files(os.path.abspath(file_path))
             logger.info("Đã đính kèm tệp video lên Facebook Reel...", "FACEBOOK")
             await asyncio.sleep(3)
+            if '/reels/create' in page.url:
+                return await self._schedule_page_reel(page, caption, native, fb_cfg.get('mark_ai', True))
             if not await self._wait_next_enabled(page, seconds=50):
                 logger.warning("Nút Next Facebook vẫn disabled sau khi tải video — vẫn thử tiếp.", "FACEBOOK")
 

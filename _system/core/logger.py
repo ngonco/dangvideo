@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from typing import List, Dict, Any, Callable
 
-SYSTEM_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from core.config_manager import SYSTEM_DIR
 LOGS_DIR = os.path.join(SYSTEM_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOGS_DIR, "app.log")
@@ -120,4 +120,3 @@ class UILogger:
         return self.logs_dir
 
 logger = UILogger()
-
