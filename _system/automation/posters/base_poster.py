@@ -9,6 +9,13 @@ from automation.hashtag_manager import hashtag_mgr
 class BasePoster(ABC):
     def __init__(self, platform_name: str):
         self.platform_name = platform_name
+        self.delivery_video_id = None
+
+    def checkpoint_submission(self, candidate_url=''):
+        """Persist before the irreversible button, including AI recovery clicks."""
+        if self.delivery_video_id is not None:
+            from core.database import db
+            db.mark_submitting(self.delivery_video_id, self.platform_name.casefold(), candidate_url)
 
     def format_caption(self, video_data: Dict[str, Any]) -> str:
         """Ghép tiêu đề, hashtag đạo lý ngẫu nhiên và chữ ký theo cấu hình"""

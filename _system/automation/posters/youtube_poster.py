@@ -161,7 +161,11 @@ class YouTubePoster(BasePoster):
                 };
             }).filter(x => x.title && x.href)""")
             wanted = re.sub(r"\s+", " ", (title or "").replace("#Shorts", "")).strip().lower()
-            for row in rows:
+            matching=[row for row in rows if re.sub(r'\s+', ' ',(row.get('title') or '').replace('#Shorts','')).strip().lower()==wanted
+                      and re.fullmatch(r'scheduled|public|đã lên lịch|công khai|lên lịch',row.get('visibility',''),re.I)]
+            if not expected_url and len(matching) != 1:
+                return ''
+            for row in matching:
                 candidate = re.sub(r"\s+", " ", (row.get("title") or "").replace("#Shorts", "")).strip().lower()
                 if not wanted or wanted != candidate:
                     continue
@@ -664,6 +668,7 @@ class YouTubePoster(BasePoster):
                     "url": "",
                     "error": "Nút Schedule YouTube vẫn bị khóa sau 90 giây; video còn Draft, không ghi nhận thành công.",
                 }
+            self.checkpoint_submission(extracted_url)
             await done_btn.evaluate("el => el.click()")
             
             # -------------------------------------------------------------

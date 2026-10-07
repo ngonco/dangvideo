@@ -5,11 +5,13 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from core.config_manager import DB_PATH
+from core.posting_store import PostingStore, local_now
 
-class Database:
+class Database(PostingStore):
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
         self.init_db()
+        self.init_posting_store()
 
     def get_connection(self):
         conn = sqlite3.connect(self.db_path)
@@ -62,7 +64,7 @@ class Database:
             conn.commit()
 
     def add_or_update_video(self, video_data: Dict[str, Any]) -> int:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = local_now().strftime("%Y-%m-%d %H:%M:%S")
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -280,7 +282,7 @@ class Database:
                     os.remove(file_path)
                 except Exception:
                     pass
-            cursor.execute("UPDATE videos SET status = 'cleaned', file_path = '' WHERE id = ?", (video_id,))
+            cursor.execute("UPDATE videos SET status = 'cleaned', file_path = '', queue_removed_at = ? WHERE id = ?", (local_now().strftime('%Y-%m-%d %H:%M:%S'),video_id))
             conn.commit()
             return True
 
@@ -344,7 +346,7 @@ class Database:
             return results
 
     def record_post(self, video_id: int, platform: str, status: str, post_url: str = "", error_message: str = ""):
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = local_now().strftime("%Y-%m-%d %H:%M:%S")
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -427,8 +429,12 @@ class Database:
                 latest_platforms = {}
                 for p in posts:
                     plat = p["platform"]
-                    if plat not in latest_platforms:
+                    if plat not in latest_platforms or (p['status'] == 'success' and latest_platforms[plat]['status'] != 'success'):
                         latest_platforms[plat] = p
+
+                for plat, post in latest_platforms.items():
+                    task = self.get_posting_task(vid_id, plat)
+                    post['delivery_state'] = task['state'] if task else ('published' if plat == 'instagram' else 'scheduled') if post['status'] == 'success' else 'failed'
 
                 v["platforms"] = latest_platforms
 
@@ -441,7 +447,7 @@ class Database:
 
     def clean_old_posted_videos(self, retention_days: int = 2) -> Dict[str, Any]:
         """Tự động dọn dẹp các tệp video .mp4 đã đăng sau số ngày chỉ định (mặc định 2 ngày)"""
-        cutoff_date = datetime.now() - timedelta(days=retention_days)
+        cutoff_date = local_now() - timedelta(days=retention_days)
         deleted_count = 0
         freed_bytes = 0
 
@@ -499,7 +505,7 @@ class Database:
             cursor.execute("SELECT COUNT(*) FROM post_history WHERE status = 'failed'")
             total_posts_failed = cursor.fetchone()[0]
 
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            today_str = local_now().strftime("%Y-%m-%d")
             cursor.execute("""
             SELECT COUNT(*) FROM post_history 
             WHERE status = 'success' AND DATE(posted_at) = ?
@@ -515,7 +521,7 @@ class Database:
 
     def has_successful_video_today(self) -> bool:
         """True khi ít nhất một video đã đăng thành công lên một kênh trong ngày."""
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = local_now().strftime("%Y-%m-%d")
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(

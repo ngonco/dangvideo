@@ -61,7 +61,8 @@ class PostingUICompatibilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await page.evaluate("document.body.dataset.wrong === 'true'"))
 
             await page.set_content('''<div role="menu" style="position:absolute;left:300px;top:300px;width:200px"><div role="menuitem" tabindex="0"
-                onclick="document.body.dataset.copied=event.isTrusted">Copy link</div></div>''')
+                onclick="document.body.dataset.copied=event.isTrusted"
+                onkeydown="if(event.key==='Enter')document.body.dataset.copied=event.isTrusted">Copy link</div></div>''')
             self.assertTrue(await asyncio.wait_for(poster._click_copy_link_item(page), timeout=15))
             self.assertTrue(await page.evaluate("document.body.dataset.copied === 'true'"))
 

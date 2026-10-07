@@ -60,6 +60,9 @@
     "default_time": "10:00",
     "target_date": "tomorrow"
   },
+  "email": {
+    "smtp_password": ""
+  },
   "custom_caption": {
     "prefix_text": "",
     "append_text": ""

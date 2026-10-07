@@ -24,6 +24,7 @@ async function initApp() {
     await fetchQueueVideos();
     await fetchAccountsStatus();
     await fetchHistory();
+    await fetchPostingHealth();
     await fetchAutostartStatus();
 
     // Tự động kiểm tra lại trạng thái tài khoản khi quay lại tab
@@ -36,6 +37,7 @@ async function initApp() {
     // Tự động làm mới lịch sử và hàng đợi mỗi 30s
     setInterval(() => {
         fetchHistory();
+        fetchPostingHealth();
         fetchAccountsStatus();
         fetchQueueSummary();
         fetchQueueVideos();
@@ -251,7 +253,7 @@ function updateHeroUI(autoRunning) {
         heroBox.classList.remove('paused');
         heroIcon.innerText = '🟢';
         heroTitle.innerText = 'HỆ THỐNG ĐANG TỰ ĐỘNG ĐĂNG VIDEO';
-        heroDesc.innerText = 'Kiểm tra ngay khi mở ứng dụng và mỗi 30 phút cho tới khi hôm nay đã đăng video.';
+        heroDesc.innerText = 'Một video mới mỗi ngày; tiếp tục các kênh còn thiếu mỗi 30 phút.';
 
         btnToggle.classList.remove('is-paused');
         btnIcon.innerText = '⏸️';
@@ -1389,7 +1391,7 @@ async function fetchHistory() {
             const isQueue = v.status === 'downloaded';
 
             const statusTag = isPosted 
-                ? '<span class="tag-video-status tag-posted">✅ Đã xuất bản</span>' 
+                ? '<span class="tag-video-status tag-posted">✅ Đã hoàn tất các kênh</span>'
                 : (isQueue ? '<span class="tag-video-status tag-downloaded">📦 Trong kho chờ đăng</span>' : '');
 
             const platforms = v.platforms || {};
@@ -1403,12 +1405,17 @@ async function fetchHistory() {
                 }
 
                 if (p.status === 'success') {
+                    const deliveryLabel = p.delivery_state === 'published' ? 'Đã công khai' : 'Đã lên lịch';
                     if (p.post_url && p.post_url.startsWith('http')) {
-                        return `<a href="${p.post_url}" target="_blank" class="btn-view-post link-${plat}">${pIcon} ${pName} ↗</a>`;
+                        return `<a href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener noreferrer" class="btn-view-post link-${plat}">${pIcon} ${pName} (${deliveryLabel}) ↗</a>`;
                     } else {
-                        return `<span class="btn-view-post link-${plat}">🟢 ${pName} (Đã đăng)</span>`;
+                        return `<span class="btn-view-post link-${plat}">🟢 ${pName} (${deliveryLabel}, đang lấy link)</span>`;
                     }
                 } else {
+                    if (p.delivery_state === 'verifying' || p.delivery_state === 'needs_login' || p.delivery_state === 'deferred') {
+                        const labels = {verifying:'Đang xác minh', needs_login:'Cần đăng nhập', deferred:'Chờ đủ giãn cách'};
+                        return `<span class="btn-view-post badge-pending">⏳ ${pName} (${labels[p.delivery_state]})</span>`;
+                    }
                     return `<button type="button" class="btn-view-post badge-failed" style="cursor: pointer; border: 1px solid #f87171; background: #fef2f2; border-radius: 6px; font-weight: 600; padding: 4px 8px; transition: all 0.2s;" title="Chi tiết lỗi: ${escapeHtml(p.error_message || 'Thất bại')} — Bấm để thử đăng lại kênh này!" onclick="retryPostPlatform(${v.id}, '${plat}', event)">❌ ${pName} (Lỗi - Thử lại) 🔄</button>`;
                 }
             }).join(' ');
@@ -1702,4 +1709,27 @@ function escapeHtml(str) {
     return str.replace(/[&<>'"]/g, 
         tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
     );
+}
+
+async function fetchPostingHealth() {
+    const panel = document.getElementById('postingHealth');
+    if (!panel) return;
+    try {
+        const response = await fetch('/api/system/posting-health');
+        if (!response.ok) throw new Error('Không lấy được tiến độ');
+        const health = await response.json();
+        const sourceLabels = {ready:'Nguồn sẵn sàng', waiting:'Nguồn đang xử lý video', empty:'Hết nguồn video hợp lệ', unreadable:'Không đọc được nguồn', needs_login:'Nguồn cần đăng nhập', network_error:'Lỗi kết nối nguồn', unchecked:'Chưa kiểm tra nguồn'};
+        const taskLabels = {pending:'Chờ đăng', uploading:'Đang tải lên', verifying:'Đang xác minh', scheduled:'Đã lên lịch', published:'Đã công khai', failed:'Chờ thử lại', needs_login:'Cần đăng nhập', deferred:'Chờ đủ giãn cách'};
+        const today = health.today;
+        const tasks = (health.tasks || []).filter(t => today && t.video_id === today.video_id);
+        const parts = [sourceLabels[health.source.state] || 'Đang kiểm tra nguồn', `Kho dự phòng: ${health.reserve.available}/${health.reserve.target} video`];
+        parts.push(today ? `Hôm nay: video #${today.video_id} — ${health.complete ? 'đã đủ các kênh' : 'đang tiếp tục'}` : 'Hôm nay: đang chờ video mới');
+        if (tasks.length) parts.push(tasks.map(t => `${t.platform}: ${taskLabels[t.state] || t.state}${!t.post_url && ['scheduled','published'].includes(t.state) ? ' (đang lấy link)' : ''}`).join(' · '));
+        if (health.next_retry) parts.push(`Thử lại: ${health.next_retry}`);
+        panel.textContent = parts.join(' | ');
+        panel.title = health.source.detail || '';
+        panel.style.borderColor = health.reserve.available < 3 ? '#d97706' : '';
+    } catch (error) {
+        panel.textContent = 'Chưa kết nối được ứng dụng; đang chờ phục hồi.';
+    }
 }

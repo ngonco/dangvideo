@@ -57,6 +57,7 @@ async def _click_done_trusted(page) -> bool:
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--video-id", type=int, required=True)
+    parser.add_argument('--headless', action='store_true')
     args = parser.parse_args()
 
     video = db.get_video_by_id(args.video_id)
@@ -65,20 +66,25 @@ async def main() -> int:
         (x for x in rows if x.get("platform") == "instagram" and x.get("status") == "success"),
         None,
     )
+    if not post:
+        task = db.get_posting_task(args.video_id, 'instagram')
+        if task and task.get('submitted_at') and task.get('post_url'):
+            post = task
     if not video or not post or not instagram_poster._is_permalink(post.get("post_url", "")):
         print("Không tìm thấy video hoặc permalink Instagram thành công.")
         return 2
 
     url = post["post_url"]
     caption = instagram_poster.format_caption(video)
-    marker = (video.get("suggested_title") or video.get("title") or "").strip()[:24]
-    context = await browser_engine.get_context(headless=False)
+    from automation.posting_verifier import normalized
+    marker = normalized(caption)
+    context = await browser_engine.get_context(headless=args.headless)
     page = await browser_engine.get_page(context)
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=45000)
         await asyncio.sleep(6)
         body = await page.locator("body").inner_text(timeout=10000)
-        if marker and marker.lower() in body.lower():
+        if marker and marker in normalized(body):
             print("CAPTION_ALREADY_PRESENT")
             return 0
 
@@ -119,7 +125,7 @@ async def main() -> int:
         await page.keyboard.type(caption, delay=8)
         await asyncio.sleep(1)
         actual = await box.evaluate("el => (el.value || el.innerText || el.textContent || '').trim()")
-        if caption.strip()[:20] not in (actual or ""):
+        if normalized(caption) != normalized(actual):
             await instagram_poster._shot(page, "ig_caption_repair_fill_failed")
             print("Ô Edit chưa nhận caption; không bấm Done.")
             return 1
@@ -144,7 +150,7 @@ async def main() -> int:
         await asyncio.sleep(6)
         await instagram_poster._shot(verify_page, "ig_caption_repaired")
         verified_body = await verify_page.locator("body").inner_text(timeout=15000)
-        if marker and marker.lower() not in verified_body.lower():
+        if marker and marker not in normalized(verified_body):
             print("CAPTION_SAVE_NOT_VERIFIED")
             return 1
         print(f"CAPTION_REPAIRED {url}")

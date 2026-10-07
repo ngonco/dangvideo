@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from core.config_manager import config_mgr
+from core.posting_store import local_now
 
 
 def get_next_post_time_slot(now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -10,20 +11,29 @@ def get_next_post_time_slot(now: Optional[datetime] = None) -> Dict[str, Any]:
     Nếu đã qua hết các mốc hôm nay, lấy mốc đầu tiên của ngày mai.
     """
     if now is None:
-        now = datetime.now()
+        now = local_now()
     sched_cfg = config_mgr.get("schedule", {}) or {}
-    slots = sched_cfg.get("post_time_slots") or ["08:00", "11:30", "18:00"]
+    slots = sched_cfg.get("post_time_slots") or []
     
     sorted_slots = []
     for s in slots:
         try:
             h, m = [int(x) for x in str(s).strip().split(":")[:2]]
-            sorted_slots.append((h, m, f"{h:02d}:{m:02d}"))
+            if 0 <= h < 24 and 0 <= m < 60:
+                sorted_slots.append((h, m, f"{h:02d}:{m:02d}"))
         except Exception:
             pass
     sorted_slots.sort()
     if not sorted_slots:
-        sorted_slots = [(10, 0, "10:00")]
+        cfg = config_mgr.get('schedule_publish', {})
+        try:
+            hour, minute = map(int, cfg.get('default_time', '10:00').split(':'))
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        except (ValueError, TypeError):
+            target = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        if cfg.get('target_date', 'tomorrow') != 'today' or target < now + timedelta(minutes=20):
+            target += timedelta(days=1)
+        return {'datetime':target, 'time':target.strftime('%H:%M'), 'target_date':target.date().isoformat(), 'label':target.strftime('%d/%m/%Y %H:%M'), 'is_today':target.date()==now.date()}
 
     buffer_now = now + timedelta(minutes=20)
     for h, m, slot_str in sorted_slots:
@@ -52,9 +62,9 @@ def get_available_slot_options(now: Optional[datetime] = None) -> List[Dict[str,
     """Trả về toàn bộ danh sách các khung giờ hợp lệ tính từ post_time_slots do user cài đặt,
     được phân loại xem mốc nào là hôm nay hay ngày mai, và mốc nào là mốc khuyến nghị tiếp theo."""
     if now is None:
-        now = datetime.now()
+        now = local_now()
     sched_cfg = config_mgr.get("schedule", {}) or {}
-    slots = sched_cfg.get("post_time_slots") or ["08:00", "11:30", "18:00"]
+    slots = sched_cfg.get("post_time_slots") or []
     
     sorted_slots = []
     for s in slots:
@@ -65,7 +75,8 @@ def get_available_slot_options(now: Optional[datetime] = None) -> List[Dict[str,
             pass
     sorted_slots.sort()
     if not sorted_slots:
-        sorted_slots = [(10, 0, "10:00")]
+        fallback = get_next_post_time_slot(now)
+        return [{'time':fallback['time'], 'target_date':fallback['target_date'], 'datetime_iso':fallback['datetime'].isoformat(), 'label':fallback['label'], 'is_recommended':True}]
 
     next_slot = get_next_post_time_slot(now)
     buffer_now = now + timedelta(minutes=20)
@@ -108,7 +119,7 @@ def get_native_schedule(
     Nếu không có override: Tự động dùng mốc giờ tiếp theo từ post_time_slots của user
     (nếu hôm nay còn kịp mốc thì hôm nay, nếu qua rồi thì mốc đầu tiên ngày mai).
     """
-    now = datetime.now()
+    now = local_now()
     cfg = config_mgr.get("schedule_publish", {}) or {}
     enabled = cfg.get("enabled", True)
 

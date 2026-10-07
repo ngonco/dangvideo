@@ -49,6 +49,7 @@ cmd = [
     "--add-data", os.path.join(HERE, "static") + ";static",
     "--add-data", os.path.join(HERE, "config.example.json") + ";.",
     "--add-data", os.path.join(HERE, "VERSION") + ";.",
+    "--add-data", os.path.join(HERE, "core", "app_supervisor.py") + ";.",
     "--hidden-import", "uvicorn.logging",
     "--hidden-import", "uvicorn.loops.auto",
     "--hidden-import", "uvicorn.protocols.http.auto",

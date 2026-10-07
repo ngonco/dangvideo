@@ -48,7 +48,7 @@ class ExistingVideoClassificationTests(unittest.TestCase):
         )
         self.assertEqual(key, "media:20260927_053240")
 
-    def test_cleaned_video_with_missing_channel_is_recoverable(self):
+    def test_cleaned_video_with_missing_channel_is_not_automatically_restored(self):
         crawler = HatBuiNhoCrawler()
         fake_db = SimpleNamespace(
             get_video_by_source_media_key=lambda key: {"id": 14, "status": "cleaned"},
@@ -70,7 +70,7 @@ class ExistingVideoClassificationTests(unittest.TestCase):
             state = crawler._get_existing_video_state("hash", "script", "media-key")
 
         self.assertEqual(state["video"]["id"], 14)
-        self.assertEqual(state["missing_platforms"], ["instagram"])
+        self.assertEqual(state["missing_platforms"], [])
 
     def test_complete_video_has_no_missing_channels(self):
         crawler = HatBuiNhoCrawler()
@@ -150,6 +150,15 @@ class WorkflowCompletionTests(unittest.IsolatedAsyncioTestCase):
             def set_video_status(self, video_id, status):
                 self.status = status
 
+            def claim_manual_daily_video(self, *args): pass
+            def ensure_posting_task(self, *args): return {'next_retry':'','submitted_at':'','state':'pending','attempts':0}
+            def get_posting_task(self, *args): return {'next_retry':'','submitted_at':'','state':'pending','attempts':0}
+            def begin_posting(self, *args): pass
+            def finish_posting_task(self, *args): pass
+            def required_platforms(self, *args): return []
+            def set_health(self, *args): return False
+            def set_posting_candidate_url(self, *args): pass
+
         fake_db = FakeDB()
         fake_browser = SimpleNamespace(
             get_context=AsyncMock(return_value=object()),
@@ -169,6 +178,7 @@ class WorkflowCompletionTests(unittest.IsolatedAsyncioTestCase):
             patch("automation.workflow_manager.instagram_poster", fake_instagram),
             patch("automation.workflow_manager.logger", Mock()),
             patch("automation.workflow_manager.asyncio.sleep", AsyncMock()),
+            patch("automation.posting_verifier.verify_delivery", AsyncMock(return_value={'verified':instagram_success,'url':instagram_result['url'],'state':'published'})),
         ):
             await workflow.publish_video_to_platforms(
                 14,

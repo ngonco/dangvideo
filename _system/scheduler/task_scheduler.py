@@ -3,6 +3,7 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
+from core.posting_store import VIETNAM
 from core.logger import logger
 from core.config_manager import config_mgr
 from core.database import db
@@ -13,17 +14,19 @@ DAILY_POST_CHECK_INTERVAL_MINUTES = 30
 
 class TaskScheduler:
     def __init__(self):
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(timezone=VIETNAM)
+        self._cycle_lock = asyncio.Lock()
         self.is_running = False
 
     def start(self):
         if not self.is_running:
+            db.recover_interrupted_uploads()
             self.reload_jobs()
             self.scheduler.start()
             self.is_running = True
             logger.info(
                 "Đã khởi động tự động đăng: kiểm tra ngay khi mở ứng dụng, "
-                f"sau đó mỗi {DAILY_POST_CHECK_INTERVAL_MINUTES} phút cho tới khi hôm nay đã đăng video.",
+                f"sau đó mỗi {DAILY_POST_CHECK_INTERVAL_MINUTES} phút để hoàn tất đủ các kênh của lượt hôm nay.",
                 "SCHEDULER",
             )
             # Run cleanup check on startup
@@ -43,7 +46,7 @@ class TaskScheduler:
         self.scheduler.add_job(
             self._scheduled_daily_post_check,
             trigger=IntervalTrigger(minutes=DAILY_POST_CHECK_INTERVAL_MINUTES),
-            next_run_time=datetime.now(),
+            next_run_time=datetime.now(VIETNAM),
             id="daily_post_opportunity_job",
             replace_existing=True,
             coalesce=True,
@@ -55,10 +58,17 @@ class TaskScheduler:
             "SCHEDULER",
         )
 
+        self.scheduler.add_job(self._scheduled_reserve_fill,
+            trigger=IntervalTrigger(minutes=60, timezone=VIETNAM), next_run_time=datetime.now(VIETNAM),
+            id='reserve_fill_job', replace_existing=True, coalesce=True, max_instances=1, misfire_grace_time=None)
+        self.scheduler.add_job(self._scheduled_link_repair,
+            trigger=IntervalTrigger(minutes=30, timezone=VIETNAM),
+            id='link_repair_job', replace_existing=True, coalesce=True, max_instances=1, misfire_grace_time=None)
+
         # Daily auto-cleanup job at 00:05 midnight
         self.scheduler.add_job(
             self._scheduled_cleanup,
-            trigger=CronTrigger(hour=0, minute=5),
+            trigger=CronTrigger(hour=0, minute=5, timezone=VIETNAM),
             id="daily_cleanup_job",
             replace_existing=True
         )
@@ -67,7 +77,7 @@ class TaskScheduler:
         # Daily summary email report job at 22:00
         self.scheduler.add_job(
             self._scheduled_daily_email_report,
-            trigger=CronTrigger(hour=22, minute=0),
+            trigger=CronTrigger(hour=22, minute=0, timezone=VIETNAM),
             id="daily_email_report_job",
             replace_existing=True
         )
@@ -96,78 +106,78 @@ class TaskScheduler:
         else:
             logger.info("Không có tệp video cũ nào cần dọn dẹp.", "CLEANUP")
 
+    async def _notify_reserve(self):
+        count = db.reserve_count()
+        state = 'empty' if count == 0 else 'low' if count < 3 else 'ready'
+        detail = {'empty': 'Kho dự phòng rỗng; cần video mới để tiếp tục đăng.',
+                  'low': 'Kho dự phòng còn dưới 3 video.',
+                  'ready': 'Kho dự phòng đã đủ mức an toàn.'}[state]
+        if db.set_health('reserve', state, detail):
+            logger.info(detail, 'SCHEDULER')
+            from core.email_reporter import email_reporter
+            email_reporter.send_error_alert('reserve', detail, step='Theo dõi kho dự phòng')
+
+    async def _fill_reserve(self):
+        need = max(0, 7 - db.reserve_count())
+        if need and not workflow_mgr.is_busy:
+            await workflow_mgr.scan_and_download(max_items=need, force_latest=False,
+                oldest_first=True, exclude_today=False)
+        await self._notify_reserve()
+
+    async def _scheduled_reserve_fill(self):
+        if not config_mgr.get('schedule', {}).get('auto_mode', False):
+            return
+        async with self._cycle_lock:
+            await self._fill_reserve()
+
     async def _scheduled_daily_post_check(self):
-        """Đăng ngay khi có cơ hội nếu hôm nay chưa có video thành công."""
-        sched_cfg = config_mgr.get("schedule", {})
-        if not sched_cfg.get("auto_mode", False):
+        if not config_mgr.get('schedule', {}).get('auto_mode', False) or workflow_mgr.is_busy or self._cycle_lock.locked():
             return
-
-        if db.has_successful_video_today():
-            logger.info("Hôm nay đã đăng video thành công. Bỏ qua lần kiểm tra này.", "SCHEDULER")
-            return
-
-        if workflow_mgr.is_busy:
-            logger.info(
-                f"Hôm nay chưa đăng video nhưng hệ thống đang bận. Sẽ thử lại sau {DAILY_POST_CHECK_INTERVAL_MINUTES} phút.",
-                "SCHEDULER",
-            )
-            return
-
-        logger.info("Hôm nay chưa đăng video. Bắt đầu đăng tự động ngay khi có cơ hội...", "SCHEDULER")
-        await self._auto_process_next_video()
+        async with self._cycle_lock:
+            try:
+                await self._auto_process_next_video()
+            except Exception as exc:
+                logger.error(f'Lỗi chu kỳ tự động; sẽ tiếp tục ở lần sau: {exc}', 'SCHEDULER')
+                db.set_health('scheduler', 'error', str(exc)[:250])
 
     async def _auto_process_next_video(self):
-        # Kiểm tra lại ngay trước khi lấy video để tránh chạy trùng với thao tác thủ công.
-        if db.has_successful_video_today():
-            logger.info("Hôm nay vừa có video đăng thành công. Không tạo thêm lượt đăng tự động.", "SCHEDULER")
+        if workflow_mgr.is_busy:
             return
+        from core.posting_store import local_now
+        run = db.get_daily_run()
+        enabled = [p for p, cfg in config_mgr.get('platforms', {}).items() if cfg.get('enabled', False)]
+        if not run and enabled:
+            if db.reserve_count() == 0:
+                await self._fill_reserve()
+            video_id = db.assign_daily_video(enabled)
+            run = db.get_daily_run()
+            if video_id:
+                logger.info(f'Lượt mới {local_now().date()}: video #{video_id}', 'SCHEDULER')
+        due = db.pending_delivery_videos()
+        if run:
+            successes = set(db.get_successful_platforms_for_video(run['video_id']))
+            current_video = db.get_video_by_id(run['video_id'])
+            if current_video and current_video['status'] != 'cleaned' and not set(run['platforms']).issubset(successes):
+                due = [run['video_id']] + [v for v in due if v != run['video_id']]
+        for video_id in due:
+            if workflow_mgr.is_busy:
+                break
+            # An old run repairs its own channels without consuming today's assignment.
+            targets = enabled
+            if targets:
+                await workflow_mgr.publish_video_to_platforms(video_id, target_platforms=targets,
+                    enforce_ig_gap=True, respect_retry=True)
+        health = db.get_posting_health()
+        db.set_health('scheduler', 'complete' if health['complete'] else 'pending',
+            'Đã hoàn tất các kênh của lượt hôm nay.' if health['complete'] else 'Tiếp tục kiểm tra các kênh còn thiếu mỗi 30 phút.')
+        await self._notify_reserve()
 
-        # Mỗi lần kích hoạt chỉ 1 video — không bù hàng loạt khi máy vừa mở lại
-        sched_cfg = config_mgr.get("schedule", {})
-        min_delay = int(sched_cfg.get("min_delay_between_posts_minutes", 180) or 180)
-        last_ig = db.get_last_success_at("instagram")
-        if last_ig:
-            from datetime import datetime
-            elapsed_min = (datetime.now() - last_ig).total_seconds() / 60.0
-            if elapsed_min < min_delay:
-                logger.info(
-                    f"Instagram vừa đăng cách đây {elapsed_min:.0f} phút (< {min_delay} phút). "
-                    "Vẫn đăng 1 video cho YT/TikTok/Facebook; Instagram sẽ được bỏ qua trong workflow.",
-                    "SCHEDULER",
-                )
+    async def _scheduled_link_repair(self):
+        if not config_mgr.get('schedule', {}).get('auto_mode', False):
+            return
+        async with self._cycle_lock:
+            await workflow_mgr.repair_requested_captions()
+            await workflow_mgr.repair_pending_links()
 
-        # 1. Tìm video chưa đăng cũ nhất trong kho hàng đợi (FIFO)
-        pending_video = db.get_oldest_pending_video()
-
-        # 2. Nếu kho trống, lấy video "Chưa tải xuống" cũ nhất trong tab Đã xong.
-        # HatBuiNho đã đánh dấu Đã xong thì video tạo hôm nay cũng đủ điều kiện đăng.
-        if not pending_video:
-            logger.info(
-                "Kho hàng đợi đang rỗng, tiến hành quét tải 1 video 'Chưa tải xuống' "
-                "cũ nhất trong tab Đã xong của HatBuiNho...",
-                "SCHEDULER",
-            )
-            new_vids = await workflow_mgr.scan_and_download(
-                max_items=1,
-                force_latest=False,
-                oldest_first=True,
-                exclude_today=False,
-            )
-            if new_vids:
-                pending_video = db.get_oldest_pending_video()
-
-        if pending_video:
-            v_title = pending_video.get("suggested_title") or pending_video.get("title")
-            logger.info(f"Tự động đăng video #{pending_video['id']}: '{v_title}'...", "SCHEDULER")
-            await workflow_mgr.publish_video_to_platforms(pending_video["id"], enforce_ig_gap=True)
-            if db.has_successful_video_today():
-                logger.success("Đã hoàn thành lượt đăng video tự động của hôm nay.", "SCHEDULER")
-            else:
-                logger.warning(
-                    f"Lượt đăng chưa có kênh nào thành công. Sẽ thử lại sau {DAILY_POST_CHECK_INTERVAL_MINUTES} phút.",
-                    "SCHEDULER",
-                )
-        else:
-            logger.info("Hiện không có video 'Chưa tải xuống' hợp lệ cần đăng trên HatBuiNho.", "SCHEDULER")
 
 task_scheduler = TaskScheduler()

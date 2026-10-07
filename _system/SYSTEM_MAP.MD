@@ -3,8 +3,8 @@
 > [!IMPORTANT]
 > ### QUY TẮC ĐẦU BẢNG: BẮT BUỘC ĐỌC KỸ TRƯỚC KHI SỬA ĐỔI HOẶC NÂNG CẤP MÃ NGUỒN
 > 1. **KHÔNG TỰ Ý THAY ĐỔI CƠ CHẾ CHỌN SELECTOR** nếu chưa kiểm tra song ngữ (Anh - Việt) và lớp phủ popup (`react-joyride`, `dialog-scrim`, dialog Instagram).
-> 2. **LUỒNG SẢN XUẤT:** YouTube / TikTok / Facebook hẹn native **công khai 10:00 sáng mai**. Instagram web **Share ngay** (Bài viết). Không Unlisted / Only you / Only me.
-> 3. **CHỐNG ĐĂNG TRÙNG:** Video sau khi đăng cập nhật `posted` và không được chọn đăng lại.
+> 2. **LUỒNG SẢN XUẤT:** YouTube / TikTok / Facebook hẹn native **công khai theo `schedule.post_time_slots` do người dùng cài đặt**; chỉ dùng `schedule_publish.default_time` / `target_date` khi không có mốc hợp lệ. Instagram web **Share ngay** (Bài viết). Không Unlisted / Only you / Only me.
+> 3. **CHỐNG ĐĂNG TRÙNG:** Chỉ cập nhật `posted` khi đã xác minh đủ kênh mục tiêu đang bật. Thành công một kênh không làm hoàn tất video; bài đã gửi nhưng chưa rõ kết quả chỉ được xác minh, không tự tải lên lại.
 > 4. **VIDEO ĐỦ ĐIỀU KIỆN:** Chế độ tự động lấy video có nhãn **Chưa tải xuống** trong tab **Đã xong** của HatBuiNho, kể cả video vừa hoàn tất trong ngày (`exclude_today = False`).
 > 5. **KIỂM THỬ TRÊN TRÌNH DUYỆT THẬT** (`test_*_retry.py` / `test_full_suite.py` hoặc `.exe`).
 > 6. **KHÔNG ĐẨY LÊN GITHUB:** cookie / `browser_profiles`, `.env`, `config.json` (mật khẩu), `data.db`, `.exe`. User tải `.exe` từ **GitHub Releases**, không từ git.
@@ -115,16 +115,16 @@ Auto_Dang_video/
     │   ├── config_manager.py   # DEFAULT_CONFIG username/password trống; đọc config.json local
     │   ├── database.py
     │   ├── email_reporter.py
-    │   ├── schedule_helper.py   # Native 10:00 sáng mai; Instagram min_gap_hours
+    │   ├── schedule_helper.py   # Native theo cài đặt user; Instagram min_gap_hours
     │   ├── logger.py
     │   └── autostart_manager.py
     │
     ├── automation/
     │   ├── browser_engine.py  # Persistent Camoufox với executable/profile riêng
     │   ├── browser_runtime.py # Cài/kiểm SHA, manifest, owner, mutex app/profile
-    │   ├── hashtag_manager.py   # Kho đạo lý + gộp hashtag AI khi tải
+    │   ├── hashtag_manager.py   # Kho đạo lý + gộp hashtag nội bộ khi tải
     │   ├── hatbuinho_crawler.py
-    │   ├── ai_fallback.py      # Hashtag AI khi tải; recover UI khi lỗi
+    │   ├── ai_fallback.py      # Hashtag nội bộ khi tải; recover UI khi lỗi
     │   ├── workflow_manager.py
     │   └── posters/
     │       ├── base_poster.py  # caption = tiêu đề + hashtags; append_text mặc định trống
@@ -216,17 +216,19 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 ## 4. HAI CHẾ ĐỘ ĐĂNG & LUỒNG CỐT LÕI
 
 ### 4.1. Đăng tự động hàng ngày
-- Mặc định `auto_mode = true`. Ngay khi ứng dụng mở, scheduler kiểm tra xem hôm nay đã có ít nhất một `video_id` đăng thành công hay chưa; nếu chưa thì đăng ngay 1 video.
-- Sau lần kiểm tra lúc mở app, scheduler kiểm tra lại mỗi **30 phút**. Nếu hệ thống đang bận, kho chưa có video hợp lệ hoặc chưa kênh nào đăng thành công, lần kiểm tra kế tiếp sẽ thử lại.
-- Khi một kênh bất kỳ đã ghi nhận `success` cho video trong ngày, các lần kiểm tra còn lại của ngày đó chỉ bỏ qua, không tạo thêm lượt đăng tự động. Sang ngày mới cơ chế tự hoạt động lại.
-- Kho rỗng → `scan_and_download(..., exclude_today=False)`; video đã nằm trong tab **Đã xong** và có nhãn **Chưa tải xuống** thì được tải ngay, kể cả tạo hôm nay.
-- `post_time_slots` không còn kích hoạt đăng; chúng chỉ chọn mốc công khai native kế tiếp. YT / TT / FB tải lên ngay và hẹn công khai; Instagram là Bài viết Share ngay, chạy thật cách **3 tiếng**.
+- Mỗi ngày theo múi giờ Việt Nam chọn tối đa một video mới FIFO, ghi bền vững vào `daily_runs`. Thành công đăng bù lượt cũ không chiếm lượt video mới hôm nay.
+- Kiểm tra ngay khi mở và mỗi **30 phút**, tiếp tục các kênh còn thiếu dù kênh khác đã thành công. `posting_tasks` lưu lần thử, lỗi, lịch và mốc gửi cuối cùng.
+- Lỗi trước khi gửi: thử lại sau **30 / 60 / 120 phút**; sau khi gửi hoặc mất kết quả: chỉ xác minh bài đã tạo, không tự tải lên lại. Mất đăng nhập cần người dùng xử lý.
+- Tự bổ sung **7 video dự phòng** ngay khi mở và mỗi **60 phút**; cảnh báo khi dưới 3 hoặc hết kho, chỉ thông báo khi tình trạng thay đổi.
+- Chỉ tải video **Chưa tải xuống** thuộc vùng **Đã xong đang hiển thị**, kể cả tạo hôm nay (`exclude_today=False`). Phân biệt đã tải, đã xóa, đang xử lý, trạng thái không đọc được, mất đăng nhập và lỗi mạng; không suy diễn trạng thái lạ thành đã tải.
+- Làm mới một lần khi trạng thái lạ; còn lỗi thì lưu ảnh vùng danh sách và cảnh báo, tiếp tục đăng từ kho. Nguồn hiện có nút Làm mới; hỗ trợ nút tải thêm khi xuất hiện.
+- Lịch công khai theo cài đặt người dùng (hiện **11:30 / 20:00**, có đệm 20 phút). Instagram chia sẻ ngay, cách tối thiểu 3 tiếng.
 
 ### 4.2. Đăng hàng loạt theo lịch
 - Nút Dashboard → `POST /api/action/batch-download-queue` (tối đa 50 video Chưa tải xuống). Scheduler lấy FIFO 1 video/ngày ngay khi có cơ hội.
 
 ### 4.3. Đăng 1 video ngay
-- `POST /api/action/run-workflow` (`mode=normal`): ưu tiên Chưa tải xuống (hết thì video mới nhất) hoặc kho. `enforce_ig_gap=True`. Hẹn native theo `schedule_publish.default_time` (mặc định 10:00).
+- `POST /api/action/run-workflow` (`mode=normal`): ưu tiên Chưa tải xuống (hết thì video mới nhất) hoặc kho. `enforce_ig_gap=True`. Hẹn native theo mốc user cài đặt; 10:00 sáng mai chỉ là fallback.
 
 ---
 
@@ -235,7 +237,7 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 - **FIFO:** `status = 'downloaded' ORDER BY id ASC LIMIT 1`.
 - **Cơ chế Chống Đăng Trùng 4 Lớp Thép:**
   1. **Lớp 1 (HatBuiNho Crawler):** Trích xuất `item_hash` từ kịch bản và `source_media_key` từ timestamp URL media. Chỉ bỏ qua khi đúng **cùng phiên bản media** đã hoàn tất; cùng kịch bản nhưng HatBuiNho render media mới vẫn được tạo thành video mới. Bản media cũ còn thiếu kênh được tải phục hồi vào đúng bản ghi cũ.
-  2. **Lớp 2 (Sau khi tải - Dung lượng byte `file_size`):** Đo kích thước tệp video tải về. Đối chiếu `db.get_video_by_file_size(file_size)`. Nếu phát hiện tệp có dung lượng byte trùng 100% với video đã có trong DB, xóa ngay tệp vừa tải và chặn đăng lại.
+  2. **Lớp 2 (Sau khi tải - SHA-256):** Dung lượng byte chỉ tìm ứng viên; chỉ loại bỏ khi SHA-256 nội dung trùng. Bản ghi cũ chưa có hash được tính khi file còn tồn tại; cùng dung lượng không đủ chứng minh trùng.
   3. **Lớp 3 (Cơ sở dữ liệu SQLite):** Ràng buộc `hatbuinho_id TEXT UNIQUE`. Khi thực hiện `ON CONFLICT`, bảo vệ trạng thái: tuyệt đối không cho phép ghi đè video đã đăng (`posted`) hoặc đã dọn (`cleaned`) ngược trở lại thành `downloaded`.
   4. **Lớp 4 (Phân phối theo từng kênh riêng lẻ):** Trước khi đăng lên từng nền tảng (`youtube`, `tiktok`, `facebook`, `instagram`), kiểm tra `post_history`. Nếu kênh đó đã từng đăng thành công video này trước đó, tự động bỏ qua (`skipped`) để tránh đăng trùng lặp trên cùng 1 kênh.
 - **Hoàn tất đa kênh:** Video chỉ chuyển sang `posted` sau khi tất cả kênh đang bật đã có lịch sử `success`. Nếu còn kênh thất bại hoặc bị hoãn, video giữ `downloaded` để lần sau đăng tiếp đúng kênh còn thiếu.
@@ -248,7 +250,7 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 
 ## 6. MODULE ĐỘC LẬP BÁO CÁO EMAIL
 
-- SMTP: `binhyentram89@gmail.com` (Gmail SSL 465). Admin: `thv.vinh@gmail.com`.
+- SMTP: mật khẩu chỉ đọc từ `config.json` local (`email.smtp_password`) hoặc biến `AUTO_VIDEO_SMTP_PASSWORD`; không nhúng vào mã nguồn. Tài khoản gửi `binhyentram89@gmail.com` (Gmail SSL 465). Admin: `thv.vinh@gmail.com`.
 - `send_error_alert` khi lỗi kênh; `send_daily_summary` lúc 22:00.
 
 ---
@@ -261,6 +263,7 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 | `GET` | `/media/{filename}` | File video trong `downloads/` |
 | `GET` | `/api/system/version` | Phiên bản |
 | `GET` | `/api/system/update/status` | Trạng thái/progress tự cập nhật EXE |
+| `GET` | `/api/system/posting-health` | Trạng thái nguồn, kho 7 video, lượt hôm nay, từng kênh và lần thử tiếp theo |
 | `GET` | `/api/system/browser-runtime` | Trạng thái `installing|ready|error`, app/version và đường dẫn rút gọn; không trả cookie |
 | `GET` | `/api/stats` | Số liệu tổng |
 | `GET` | `/api/videos` | Danh sách video kho |
@@ -336,7 +339,7 @@ Một trang cuộn duy nhất:
   - **Video đơn bản (1 bản duy nhất / không có tab phụ):** Bấm trực tiếp nút "Tải xuống" / "Tải lại" của thẻ video để mở `#download_reminder_modal`.
   - **Video đa phiên bản (có từ 2 tab `.history-variant-tab` trở lên):** Tự động phân tích timestamp tạo video từ link media (`YYYYMMDD_HHMMSS`), ưu tiên chọn phiên bản mới nhất và kiểm tra HTTP 200 còn sống trên CDN. Nếu bản mới nhất bị lỗi 404 (do file cũ hết hạn), tự động fallback sang phiên bản khác còn sống. Chuyển tab sang phiên bản đã chọn và bấm nút "Tải xuống" trong panel tương ứng.
   - **Tải tệp & Cơ chế dự phòng kép:** Ưu tiên bấm `#btn_confirm_download_2` ('Tải xuống 2 - có tên') qua Playwright download. Nếu trình duyệt báo hủy (`canceled`) hoặc lỗi, hệ thống tự động kích hoạt **Cơ chế tải trực tiếp dự phòng** qua stream URL media về thư mục `downloads/` và gọi API ghi nhận `postTrackDownload`. Nếu toàn bộ link của video đều 404, ghi nhật ký cảnh báo và tự động chuyển sang video tiếp theo.
-  - **Chẩn đoán log:** Ghi rõ số lượng 'Chưa tải xuống' vs 'Đã tải xuống', phiên bản media mới/cũ, lý do bỏ qua (trùng đúng phiên bản Lớp 1, trùng byte dung lượng Lớp 2), và thông báo rõ khi toàn bộ video trên web đều đã tải xong.
+  - **Chẩn đoán log:** Ghi rõ số lượng 'Chưa tải xuống' vs 'Đã tải xuống', phiên bản media mới/cũ, lý do bỏ qua (trùng đúng phiên bản Lớp 1, trùng SHA-256 nội dung Lớp 2), và thông báo rõ khi toàn bộ video trên web đều đã tải xong.
   - **Lưu trữ Log:** Tự động ghi persistent log ra `_system/logs/app.log` (Rotating 5MB x 5 file, UTF-8), hỗ trợ mở thư mục và tải file log trên Dashboard.
 
 ### Quy Tắc 8: Hashtag & Ổn Định
@@ -363,12 +366,25 @@ Một trang cuộn duy nhất:
 ### 10.2. Bảng `post_history`
 `platform` = youtube / tiktok / facebook / instagram. `status` = success / failed / skipped. `post_url` = permalink.
 
-### 10.3. Cấu hình
+### 10.3. Lượt ngày, giao bài và tình trạng
+- `daily_runs`: ngày Việt Nam duy nhất, `video_id` duy nhất, các kênh mục tiêu; giao dịch SQLite chặn chọn hai video khi gọi đồng thời.
+- `posting_tasks`: khóa `(video_id, platform)`; `pending / uploading / verifying / scheduled / published / failed / needs_login / deferred`, lần thử, thời điểm thử lại, thời điểm gửi, lịch và URL bài.
+- `posting_health`: trạng thái nguồn/kho/scheduler và thời điểm kiểm tra. API trạng thái chỉ đọc, không trả cookie hoặc mật khẩu.
+- Khi ứng dụng sở hữu phiên khởi động, lượt tải lên chưa gửi bị gián đoạn được thử lại; lượt đã gửi phải xác minh. Không tự khôi phục video `cleaned` cũ vào hàng đợi.
+- Chỉ chuyển `posted` khi đủ các kênh đang bật; đăng thủ công một kênh không hoàn tất toàn bộ video. Giữ file khi còn kênh thiếu.
+- Link chưa có sau xác minh bài là tác vụ phục hồi link riêng; không tải lên lại chỉ để lấy link.
+- Thời gian lấy link trong poster tối đa 60 giây, trong verifier tối đa 35 giây. Chờ permalink không được chặn các kênh khác. Facebook Copy link kích hoạt bằng bàn phím thật để tránh treo đường đi chuột của Camoufox.
+- Chú thích TikTok được chèn nguyên khối và đọc lại đầy đủ, giữ dấu tiếng Việt/hashtag. Nếu có yêu cầu sửa rõ ràng `caption-repair:<platform>:<video_id>` trong `posting_health`, chỉ sửa đúng permalink đã gửi; bài đang khóa chỉnh sửa được giữ nguyên và kiểm tra lại mỗi 30 phút. Không xóa hoặc đăng lại để sửa mô tả.
+- Instagram Share được kích hoạt bằng bàn phím thật; verifier phải thấy đầy đủ chú thích cùng thời gian bài. Công cụ `repair_instagram_caption.py --video-id N --headless` hỗ trợ permalink của task đang xác minh và đọc lại trên trang mới.
+
+### 10.4. Cấu hình
+- Khi tự động bật, giữ Windows khỏi tự ngủ; không ngăn người dùng chủ động tắt máy. Shortcut Windows chạy launcher Python nền của runtime riêng (không giữ khóa EXE khi tự cập nhật): phục hồi thoát bất thường có giới hạn, thoát bình thường thì dừng. Nếu máy chủ trong tray chết, ứng dụng thoát lỗi để launcher khởi động lại toàn bộ, không tái sử dụng scheduler/trình duyệt thuộc vòng lặp cũ.
 - Local: `_system/config.json` (gitignore). Mẫu: `config.example.json`.
+- Mật khẩu gửi email nằm trong `email.smtp_password` của cấu hình local hoặc biến `AUTO_VIDEO_SMTP_PASSWORD`; không nhúng mật khẩu vào mã nguồn/EXE.
 - `browser.headless=true` (mặc định): ẩn cửa sổ khi tải/đăng. Nút Dashboard **HIỂN THỊ QUÁ TRÌNH ĐĂNG** bật cửa sổ. **Mở Trình Duyệt Đăng Nhập** luôn hiện.
 - `browser.mute_audio=true` (mặc định): Camoufox `media.volume_scale=0.0`. Nút Dashboard đổi được; trình duyệt của user không bị ảnh hưởng.
 - `schedule_publish.default_time=10:00`, `target_date=tomorrow`.
-- Scheduler kiểm tra cơ hội đăng ngay khi app mở và lặp cố định mỗi 30 phút cho tới khi ngày đó có video thành công.
+- Scheduler kiểm tra ngay khi app mở và mỗi 30 phút để hoàn tất các kênh của lượt ngày; bổ sung kho 7 video mỗi 60 phút. Giờ Việt Nam được dùng độc lập với múi giờ máy.
 - `platforms.facebook`: `target_type: "personal"` (mặc định), `page_name: ""`, `page_url: ""`.
 - `custom_caption.append_text` trống (không `#hatbuinho`).
 - `platforms.instagram.min_gap_hours=3`.
@@ -390,7 +406,7 @@ Một trang cuộn duy nhất:
 | YouTube 'Hết thời gian chờ đăng nhập' dù đã đăng nhập | Headless Chromium bị chặn bởi màn hình 'Improve your experience' (unsupported browser) | Set desktop Chrome User-Agent, truy cập kèm `?approve_browser_access=true`, tự động click 'Skip to YouTube Studio' và kiểm tra `studio.youtube.com/channel/` |
 | User không có .exe trong git clone | `.exe` không nằm trong git | Tải https://github.com/ngonco/dangvideo/releases/latest |
 
-Tài liệu này khớp mã nguồn hiện tại: native schedule, Instagram permalink thanh địa chỉ, hashtag AI khi tải, phát hành `.exe` qua GitHub Releases.
+Tài liệu này khớp mã nguồn hiện tại: native schedule, Instagram permalink thanh địa chỉ, hashtag nội bộ khi tải, phát hành `.exe` qua GitHub Releases.
 
 ---
 
@@ -398,6 +414,7 @@ Tài liệu này khớp mã nguồn hiện tại: native schedule, Instagram per
 
 | Ngày | Tác giả | Thay đổi | Lý do |
 | :--- | :--- | :--- | :--- |
+| 2026-10-07 | Codex | Thêm lượt ngày và checkpoint từng kênh, kho 7 video, backoff 30/60/120 phút, trạng thái nguồn/đăng, SHA-256, phục hồi link và tiến trình; thống nhất lịch theo user. | Trình duyệt thật xác nhận 10 mục nguồn đều báo Video đã xoá; mã cũ coi trạng thái lạ là đã tải. Đăng bù không được chiếm lượt ngày mới và thành công một phần không được dừng các kênh thiếu. |
 | 2026-10-02 | Codex | v1.13.0: Hỗ trợ Facebook Reel kiểu chọn tệp trước qua file chooser rồi mở `/reels/create`; kiểm tra chú thích, nhãn AI, Public, ngày/giờ đọc lại và nút Schedule Post. Lấy link đúng hàng trong tab Scheduled bằng thao tác chuột thật; ưu tiên clipboard trình duyệt ẩn, hỗ trợ handle Windows 64-bit. YouTube tiếp tục bản nháp chỉ khi khớp cả tiêu đề và tên tệp, bấm nút HTML bên trong ytcp-button, hỗ trợ description/URL của host display:contents và xác nhận đúng video Scheduled/Public. Log EXE ghi vào thư mục `_system/logs` bền vững. | Video #21 bị kẹt Facebook do chờ hộp thoại trước khi chọn tệp; YouTube giữ Draft do nút Schedule cũ và không lấy được URL từ host mới. Đã xác minh lịch thật 10:00 ngày 03/10 trên hai kênh và lấy link Facebook tự động khi chạy ẩn, giữ chống trùng TikTok/Instagram. |
 | 2026-09-27 | Codex | Sửa bộ chọn giờ TikTok bấm trực tiếp giá trị giờ/phút thay vì khối cha của bánh xe; bắt buộc đọc lại ô giờ và dừng trước nút Schedule nếu chưa khớp. | Kiểm tra đăng thật phát hiện mã cũ tìm đúng `11:30` nhưng mỗi lần bấm lại làm bánh xe tăng giờ, khiến bài chờ thành `22:30` trong khi log vẫn báo `11:30`. |
 | 2026-09-27 | Codex | Định danh video theo phiên bản media HatBuiNho thay vì chỉ hash kịch bản; cho auto mode tải video trong tab Đã xong kể cả được tạo hôm nay. | HatBuiNho có thể render video mới cùng kịch bản cũ; hash chữ khiến app gộp nhầm và bỏ qua file media ngày 27/09. |

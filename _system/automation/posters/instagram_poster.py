@@ -216,8 +216,8 @@ class InstagramPoster(BasePoster):
             actual = await box.evaluate(
                 "el => (el.value || el.innerText || el.textContent || '').trim()"
             )
-            expected = caption.strip()[:20]
-            if expected and expected not in (actual or ""):
+            from automation.posting_verifier import normalized
+            if normalized(actual) != normalized(caption):
                 logger.warning(
                     f"Ô chú thích Instagram chưa nhận nội dung (actual={actual[:80]!r}).",
                     "INSTAGRAM",
@@ -232,7 +232,8 @@ class InstagramPoster(BasePoster):
 
     async def _click_share(self, page: Page) -> bool:
         logger.info("Instagram web không có hẹn giờ — bấm Chia sẻ / Share ngay (công khai).", "INSTAGRAM")
-        clicked = await page.evaluate("""() => {
+        self.checkpoint_submission()
+        focused = await page.evaluate("""() => {
             const dialog = document.querySelector('div[role="dialog"]') || document.body;
             const btns = Array.from(dialog.querySelectorAll('div[role="button"], button'));
             const hit = btns.find(b => {
@@ -240,10 +241,11 @@ class InstagramPoster(BasePoster):
                 return t === 'Share' || t === 'Chia sẻ';
             });
             if (!hit) return false;
-            hit.click();
+            hit.focus();
             return true;
         }""")
-        if clicked:
+        if focused:
+            await asyncio.wait_for(page.keyboard.press('Enter'),timeout=8)
             logger.info("Đã bấm Chia sẻ / Share trong dialog tạo bài.", "INSTAGRAM")
             return True
         logger.error("Không thấy nút Chia sẻ / Share (đúng chữ, không Chia sẻ bài viết).", "INSTAGRAM")

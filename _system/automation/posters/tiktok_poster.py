@@ -191,12 +191,21 @@ class TikTokPoster(BasePoster):
         ).first
         if not await editor.is_visible(timeout=25000):
             logger.warning("Không thấy ô mô tả TikTok.", "TIKTOK")
-            return
-        await editor.click(force=True)
+            return False
+        await editor.evaluate('(e)=>e.focus()')
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Backspace")
         await asyncio.sleep(0.4)
-        await page.keyboard.type(caption, delay=18)
+        # Bulk text insertion avoids hashtag suggestions consuming typed characters.
+        await page.keyboard.insert_text(caption)
+        await asyncio.sleep(1)
+        from automation.posting_verifier import normalized
+        if normalized(await editor.inner_text()) != normalized(caption):
+            await editor.fill(caption)
+            await asyncio.sleep(1)
+            if normalized(await editor.inner_text()) != normalized(caption):
+                logger.error('Chú thích TikTok đọc lại chưa khớp; dừng trước khi gửi.', 'TIKTOK')
+                return False
         logger.info("Đã điền mô tả TikTok.", "TIKTOK")
         await asyncio.sleep(0.6)
         # Đóng gợi ý hashtag: bấm nhãn Mô tả (bản ghi action-011)
@@ -205,11 +214,12 @@ class TikTokPoster(BasePoster):
             'span:has-text("Mô tả"), span:has-text("Description")'
         ).first
         try:
-            if await title.is_visible(timeout=1500):
-                await title.click(force=True)
+                if await title.is_visible(timeout=1500):
+                    await title.evaluate('(e)=>e.click()')
                 await asyncio.sleep(0.4)
         except Exception:
             pass
+        return True
 
     async def _select_schedule_radio(self, page: Page) -> bool:
         """Radio Lên lịch trong Thời điểm đăng — không bấm Bây giờ, không bấm footer."""
@@ -401,6 +411,7 @@ class TikTokPoster(BasePoster):
         if low in ("post", "đăng", "post now", "đăng ngay", "bây giờ"):
             logger.error(f"Nút chân TikTok vẫn là '{label}' — không bấm Đăng ngay.", "TIKTOK")
             return False
+        self.checkpoint_submission()
         await btn.click(force=True)
         logger.info(f"Đã bấm nút chân TikTok: '{label}'", "TIKTOK")
         await asyncio.sleep(3)
@@ -420,18 +431,8 @@ class TikTokPoster(BasePoster):
 
     async def _read_clipboard(self, page: Page) -> str:
         # 1. Direct OS clipboard read (instant, 100% reliable on Windows)
-        clip = self._read_os_clipboard()
-        if clip:
-            return clip
 
         # 2. Browser clipboard with hard timeout (prevents hanging in Firefox/Camoufox)
-        try:
-            await page.context.grant_permissions(
-                ["clipboard-read", "clipboard-write"],
-                origin="https://www.tiktok.com",
-            )
-        except Exception:
-            pass
         try:
             text = await asyncio.wait_for(
                 page.evaluate(
@@ -445,9 +446,9 @@ class TikTokPoster(BasePoster):
                 ),
                 timeout=2.5,
             )
-            return (text or "").strip()
+            return (text or "").strip() or self._read_os_clipboard()
         except Exception:
-            return ""
+            return self._read_os_clipboard()
 
     async def _click_posts_tab(self, page: Page):
         for name in ("Bài đăng", "Posts"):
@@ -474,7 +475,7 @@ class TikTokPoster(BasePoster):
                     if (!timed) return false;
                     if (snippet) {
                         const sn = snippet.toLowerCase().slice(0, 12);
-                        if (sn && !low.includes(sn) && !timed) return false;
+                        if (sn && !low.includes(sn)) return false;
                     }
                     const btns = el.querySelectorAll('button');
                     return btns.length >= 2;
@@ -501,13 +502,6 @@ class TikTokPoster(BasePoster):
         """Chờ, làm tươi tab Bài đăng, copy link hàng vừa hẹn (cột Hành động)."""
         logger.info("Chờ TikTok tạo link bài vừa lên lịch, rồi làm tươi Bài đăng...", "TIKTOK")
         await asyncio.sleep(18)
-        try:
-            await page.context.grant_permissions(
-                ["clipboard-read", "clipboard-write"],
-                origin="https://www.tiktok.com",
-            )
-        except Exception:
-            pass
 
         for attempt in range(8):
             logger.info(f"Làm tươi TikTok Studio Content để Copy link (lần {attempt + 1}/8)...", "TIKTOK")
@@ -611,7 +605,8 @@ class TikTokPoster(BasePoster):
             await self._dismiss_overlays(page)
             await self._confirm_discard_dialog(page)
 
-            await self._fill_caption(page, caption)
+            if not await self._fill_caption(page, caption):
+                return {'success':False,'url':'','error':'Không xác nhận được chú thích TikTok; chưa gửi bài.'}
 
             if mark_ai:
                 try:
@@ -686,7 +681,11 @@ class TikTokPoster(BasePoster):
                     goal=SCHEDULE_GOAL,
                 )
 
-            post_url = await self._copy_scheduled_post_link(page, caption)
+            try:
+                post_url = await asyncio.wait_for(self._copy_scheduled_post_link(page, caption), timeout=60)
+            except Exception as exc:
+                logger.warning(f'Chưa lấy được link TikTok: {type(exc).__name__}; chuyển sang xác minh bài.', 'TIKTOK')
+                post_url = ''
             if not post_url:
                 logger.warning("Đã lên lịch TikTok nhưng chưa Copy được link bài.", "TIKTOK")
             logger.success(

@@ -24,6 +24,76 @@ class VersionSelectionResult(dict):
 class HatBuiNhoCrawler:
     def __init__(self):
         self.base_url = "https://hatbuinho.com/"
+        self.last_scan_status = {"state": "unchecked", "detail": "Chưa kiểm tra nguồn"}
+
+    def _source_state(self, state, detail):
+        self.last_scan_status = {"state": state, "detail": detail}
+        previous = db.get_health('source')
+        changed = db.set_health("source", state, detail)
+        if changed and state in ("unreadable", "needs_login", "network_error", "empty"):
+            logger.warning(detail, "HATBUINHO")
+            from core.email_reporter import email_reporter
+            email_reporter.send_error_alert("hatbuinho", detail, step="Kiểm tra nguồn và kho dự phòng")
+        elif changed and state == 'ready' and previous and previous['state'] != 'ready':
+            logger.success('Nguồn HatBuiNho đã phục hồi.', 'HATBUINHO')
+            from core.email_reporter import email_reporter
+            email_reporter.send_error_alert('hatbuinho', 'Nguồn đã phục hồi: '+detail, step='Phục hồi nguồn video')
+
+    @staticmethod
+    def classify_source_labels(labels):
+        # Read badges only; the script body can itself contain any of these words.
+        text = " ".join(labels).casefold().replace("xoá", "xóa")
+        if "video đã xóa" in text or "video deleted" in text:
+            return "deleted"
+        if "chưa tải xuống" in text or "not downloaded" in text:
+            return "pending"
+        if "đã tải xuống" in text or "downloaded" in text:
+            return "downloaded"
+        if "đang xử lý" in text or "processing" in text:
+            return "processing"
+        return "unknown"
+
+    async def _read_source_states(self, page):
+        items = page.locator('#history_list_done details.history-order:visible')
+        states = []
+        for idx in range(await items.count()):
+            labels = await items.nth(idx).locator('summary span:visible').all_text_contents()
+            states.append(self.classify_source_labels(labels))
+        return states
+
+    async def _prepare_source(self, page):
+        for attempt in range(2):
+            if not await self._open_done_video_list(page):
+                raise RuntimeError("Không mở được vùng video Đã xong")
+            # Wait for explicit items or an explicit empty response, not a fixed sleep.
+            await page.wait_for_function('''() => {
+                const list=document.getElementById('history_list_done');
+                const tab=document.getElementById('history_tab_done');
+                if (!list || !list.getClientRects().length || !tab?.className.includes('--active')) return false;
+                const text=(list.innerText||'').toLowerCase();
+                return !!list.querySelector('details.history-order') || /chưa có|không có|no videos|no results/.test(text);
+            }''', timeout=20000)
+            # The current live source has only Refresh. Support append-style Load more when present.
+            for _ in range(50):
+                more = page.get_by_role('button', name=re.compile(r'^(Tải thêm|Xem thêm|Load more)$', re.I)).first
+                if not await more.is_visible() or not await more.is_enabled():
+                    break
+                before = await page.locator('#history_list_done details.history-order').count()
+                await more.click(timeout=5000)
+                await page.wait_for_function('(n) => document.querySelectorAll("#history_list_done details.history-order").length > n',arg=before,timeout=15000)
+            else:
+                raise RuntimeError("Danh sách vượt 50 lượt tải thêm; chưa thể kết luận hết nguồn")
+            states = await self._read_source_states(page)
+            if 'unknown' not in states:
+                return states
+            if attempt == 0:
+                await page.reload(wait_until='domcontentloaded', timeout=45000)
+        # Save only the source panel; never dump page cookies/forms or session data.
+        shot = os.path.join(SYSTEM_DIR, 'debug_screenshots', 'hbn_unknown_status.png')
+        os.makedirs(os.path.dirname(shot), exist_ok=True)
+        await page.locator('#history_list_done').screenshot(path=shot)
+        self._source_state('unreadable', 'Không đọc được trạng thái video HatBuiNho sau khi làm mới; đang dùng kho dự phòng.')
+        return states
 
     async def _dismiss_announcements(self, page: Page):
         """Đóng overlay thông báo ('Đã đọc') vì nó chặn nút Video."""
@@ -496,7 +566,7 @@ class HatBuiNhoCrawler:
         successful_platforms = set(db.get_successful_platforms_for_video(existing_video["id"]))
         return {
             "video": existing_video,
-            "missing_platforms": sorted(required_platforms - successful_platforms),
+            "missing_platforms": [] if existing_video.get('queue_removed_at') or existing_video.get('status') == 'cleaned' else sorted(required_platforms - successful_platforms),
         }
 
     def _extract_clean_first_sentence(self, script_text: str, max_length: int = 85) -> str:
@@ -597,37 +667,31 @@ class HatBuiNhoCrawler:
             logged_in = await self.login_if_needed(page)
             if not logged_in:
                 logger.error("Không có session HatBuiNho hợp lệ. Dừng quét tải.", "HATBUINHO")
+                self._source_state('needs_login', 'HatBuiNho cần đăng nhập lại; đang dùng kho dự phòng.')
                 return downloaded_videos
 
             logger.info("Mở danh sách video: bấm nút Video rồi tab Đã xong...", "HATBUINHO")
-            opened = await self._open_done_video_list(page)
-            if not opened:
-                logger.error("Không mở được danh sách video HatBuiNho.", "HATBUINHO")
-                return downloaded_videos
+            source_states = await self._prepare_source(page)
 
             # Query all video items
-            total_items = await page.locator('details.history-order').count()
+            total_items = len(source_states)
             logger.info(f"Tìm thấy tổng cộng {total_items} mục video trên trang HatBuiNho.", "HATBUINHO")
 
             # Tìm danh sách index các video 'Chưa tải xuống'
             pending_indexes = []
             downloaded_count_on_page = 0
             other_status_count = 0
-            for idx in range(total_items):
+            for idx, source_state in enumerate(source_states):
                 try:
-                    item_locator = page.locator('details.history-order').nth(idx)
-                    if force_latest or force_repost:
+                    item_locator = page.locator('#history_list_done details.history-order:visible').nth(idx)
+                    if (force_latest or force_repost) and source_state not in ('deleted', 'processing', 'unknown'):
                         pending_indexes.append(idx)
+                    elif source_state == 'pending':
+                        pending_indexes.append(idx)
+                    elif source_state == 'downloaded':
+                        downloaded_count_on_page += 1
                     else:
-                        badge_pending = item_locator.locator('summary span:has-text("Chưa tải xuống")').first
-                        if await badge_pending.is_visible():
-                            pending_indexes.append(idx)
-                        else:
-                            badge_done = item_locator.locator('summary span:has-text("Đã tải xuống")').first
-                            if await badge_done.is_visible():
-                                downloaded_count_on_page += 1
-                            else:
-                                other_status_count += 1
+                        other_status_count += 1
                 except Exception:
                     pass
 
@@ -635,17 +699,21 @@ class HatBuiNhoCrawler:
                 f"Phân tích trạng thái {total_items} video trên HatBuiNho: "
                 f"{len(pending_indexes)} 'Chưa tải xuống', "
                 f"{downloaded_count_on_page} 'Đã tải xuống'"
-                f"{f', {other_status_count} trạng thái khác' if other_status_count else ''}.",
+                f", {source_states.count('deleted')} đã xóa, {source_states.count('processing')} đang xử lý, {source_states.count('unknown')} không nhận diện.",
                 "HATBUINHO"
             )
 
             use_latest = bool(force_latest or force_repost)
+            if 'unknown' not in source_states:
+                deleted = source_states.count('deleted')
+                self._source_state('ready' if pending_indexes else 'waiting' if 'processing' in source_states else 'empty',
+                    f"Nguồn có {len(pending_indexes)} video có thể tải, {downloaded_count_on_page} đã tải, {deleted} video đã xóa.")
             if not pending_indexes and not use_latest:
                 slots = config_mgr.get("schedule", {}).get("post_time_slots", ["08:00", "11:30", "19:30"])
                 queue_summary = db.get_queue_summary(slots_per_day=len(slots))
                 total_pending = queue_summary.get("total_pending", 0)
                 logger.info(
-                    f"Toàn bộ {total_items} video hiển thị trên HatBuiNho đều đã có nhãn 'Đã tải xuống' hoặc đã tải về trước đó. "
+                    f"Không có video hợp lệ để tải. Trạng thái nguồn: {self.last_scan_status['state']}. "
                     f"Kho hàng đợi hiện có {total_pending} video sẵn sàng đăng (chống đăng trùng: BẬT).",
                     "HATBUINHO"
                 )
@@ -683,11 +751,11 @@ class HatBuiNhoCrawler:
                     break
 
                 try:
-                    item_locator = page.locator('details.history-order').nth(idx)
+                    item_locator = page.locator('#history_list_done details.history-order:visible').nth(idx)
                     
                     if not use_latest:
-                        badge = item_locator.locator('summary span:has-text("Chưa tải xuống")').first
-                        if not await badge.is_visible():
+                        labels = await item_locator.locator('summary span:visible').all_text_contents()
+                        if self.classify_source_labels(labels) != 'pending':
                             continue
 
                     # Extract raw script text / summary
@@ -728,7 +796,7 @@ class HatBuiNhoCrawler:
                             if not missing_platforms:
                                 logger.info(
                                     f"[CHẶN TRÙNG LỚP 1] Phiên bản media của video #{idx+1} trùng DB "
-                                    f"#{existing_video['id']} và đã hoàn tất tất cả kênh. Không đăng lại.",
+                                    f"#{existing_video['id']} đã hoàn tất hoặc đã dọn khỏi kho. Không tự khôi phục hay đăng lại.",
                                     "HATBUINHO",
                                 )
                                 try:
@@ -854,10 +922,11 @@ class HatBuiNhoCrawler:
                     # LỚP 2: CHẶN TRÙNG DUNG LƯỢNG FILE (BYTE-TO-BYTE)
                     if not force_repost and file_size > 0:
                         recovery_id = recovery_video["id"] if recovery_video else None
-                        dup_vid = db.get_video_by_file_size(file_size, exclude_id=recovery_id)
+                        duplicate_id = db.find_content_duplicate(target_file_path, exclude_id=recovery_id)
+                        dup_vid = db.get_video_by_id(duplicate_id) if duplicate_id else None
                         if dup_vid:
                             logger.warning(
-                                f"[CHẶN TRÙNG LỚP 2 - DUNG LƯỢNG] Tệp vừa tải có dung lượng {file_size:,} bytes trùng khớp 100% với video #{dup_vid['id']} ('{dup_vid.get('title')}') đã có trong DB. Đã xóa tệp tạm và bỏ qua không đăng lại!",
+                                f"[CHẶN TRÙNG SHA-256] Nội dung tệp trùng video #{dup_vid['id']}; bỏ qua tải trùng.",
                                 "HATBUINHO"
                             )
                             try:
@@ -901,7 +970,9 @@ class HatBuiNhoCrawler:
                             "HATBUINHO",
                         )
                     else:
-                        db.add_or_update_video(video_record)
+                        saved_id = db.add_or_update_video(video_record)
+                        db.set_content_hash(saved_id, target_file_path)
+                        video_record['id'] = saved_id
                         downloaded_videos.append(video_record)
                     count += 1
 
@@ -935,6 +1006,7 @@ class HatBuiNhoCrawler:
             return downloaded_videos
 
         except Exception as ex:
+            self._source_state('network_error', f"Lỗi truy cập/quét HatBuiNho: {str(ex)[:250]}")
             shot_path = os.path.join(SYSTEM_DIR, "debug_screenshots", "hbn_scan_err.png")
             try:
                 if page is not None:
@@ -1002,6 +1074,10 @@ class HatBuiNhoCrawler:
             version_info = await self._select_highest_version_and_open_download(item_locator)
             if version_info is None:
                 logger.warning("Không thể mở phiên bản video trên HatBuiNho.", "HATBUINHO")
+                return None
+
+            if video_data.get('source_media_key') and self._source_media_key(version_info) != video_data['source_media_key']:
+                logger.error('Không phục hồi bằng phiên bản media khác: lịch sử chống trùng phải thuộc đúng tệp.', 'HATBUINHO')
                 return None
 
             await asyncio.sleep(1.5)

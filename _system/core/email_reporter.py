@@ -17,7 +17,7 @@ from core.database import db
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465
 SENDER_EMAIL = "binhyentram89@gmail.com"
-SENDER_PASSWORD = "lddpyebeszvnbpss"
+SENDER_PASSWORD = ''  # Password is read from local config only.
 RECEIVER_EMAIL = "thv.vinh@gmail.com"
 
 class EmailReporter:
@@ -53,7 +53,7 @@ class EmailReporter:
             msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
             with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=15) as server:
-                server.login(SENDER_EMAIL, SENDER_PASSWORD)
+                server.login(SENDER_EMAIL, config_mgr.get('email', {}).get('smtp_password') or os.environ.get('AUTO_VIDEO_SMTP_PASSWORD', ''))
                 server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
             
             logger.info(f"Đã gửi email báo cáo thành công tới {RECEIVER_EMAIL}: {subject}", "EMAIL")

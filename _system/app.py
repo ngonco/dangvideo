@@ -164,6 +164,12 @@ async def get_history(limit: int = 100):
     history = db.get_all_videos_with_latest_posts(limit=limit)
     return {"history": history}
 
+@app.get("/api/system/posting-health")
+async def get_posting_health():
+    health = db.get_posting_health()
+    health['is_busy'] = workflow_mgr.is_busy
+    return health
+
 @app.get("/api/videos/{video_id}/history")
 async def get_video_history(video_id: int):
     posts = db.get_post_history(video_id=video_id)
@@ -196,6 +202,8 @@ async def update_config(req: ConfigUpdateRequest):
                 current_platforms[plat] = p_cfg
         updates["platforms"] = current_platforms
     config_mgr.update(updates)
+    if 'platforms' in updates:
+        db.update_today_targets([p for p,cfg in config_mgr.get('platforms',{}).items() if cfg.get('enabled',False)])
     task_scheduler.reload_jobs()
     logger.info("Đã cập nhật cấu hình hệ thống.", "CONFIG")
     if mute_changed or headless_changed:

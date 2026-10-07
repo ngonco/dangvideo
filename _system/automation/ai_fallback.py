@@ -146,6 +146,19 @@ async def _execute_action(page: Page, payload: Dict[str, Any], platform: str = "
     if _is_forbidden(action, text, selector, platform):
         return f"blocked_guardrail:{text or selector}"
 
+    from automation.delivery_context import delivery_context
+    delivery = delivery_context.get()
+    if delivery and action in ('click_selector', 'click_text', 'press'):
+        # AI may unblock navigation, but only the platform poster may submit a post.
+        # Otherwise no exact pre-submit checkpoint/identity check is possible.
+        blob = (text + ' ' + selector + ' ' + key).casefold()
+        if action == 'click_selector':
+            loc = page.locator(selector).first
+            if await loc.count():
+                blob += ' ' + (await loc.inner_text()).casefold()
+        if action == 'press' or re.search(r'share|schedule|post|đăng|lên lịch|chia sẻ|done-button', blob):
+            return 'blocked_submission_requires_platform_verifier'
+
     if action == "wait":
         await asyncio.sleep(min(max(seconds, 0.3), 8))
         return "waited"

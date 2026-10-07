@@ -400,12 +400,13 @@ class FacebookPoster(BasePoster):
         if not await submit.is_enabled():
             return {"success": False, "url": "", "error": "Nút lên lịch Facebook chưa khả dụng."}
         await self._shot(page, 'fb_page_before_schedule')
+        self.checkpoint_submission()
         await submit.evaluate('el => el.click()')
         await page.wait_for_url(lambda url: '/reels/create' not in url, timeout=90000)
         logger.success(f"Facebook đã hoàn tất gửi lịch {native['label']} từ trình tạo Reel mới.", "FACEBOOK")
         post_url = ""
         try:
-            post_url = await self._copy_scheduled_post_link(page, caption)
+            post_url = await asyncio.wait_for(self._copy_scheduled_post_link(page, caption), timeout=60)
         except Exception as exc:
             logger.warning(f"Facebook đã gửi lịch, nhưng lấy link bị lỗi: {exc}. Không đăng lại video.", "FACEBOOK")
         return {"success": True, "url": post_url, "error": ""}
@@ -940,11 +941,11 @@ class FacebookPoster(BasePoster):
             item = page.get_by_role("menuitem", name=name, exact=True)
             try:
                 if await item.is_visible(timeout=2000):
-                    box = await item.bounding_box()
-                    if box:
-                        # Send a trusted click without locator navigation waits.
-                        await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
-                        return True
+                    # Keyboard activation stays trusted without Camoufox's mouse
+                    # trajectory occasionally hanging the entire link job.
+                    await item.focus()
+                    await asyncio.wait_for(page.keyboard.press('Enter'),timeout=5)
+                    return True
             except Exception:
                 pass
         return bool(await page.evaluate("""() => {
@@ -1116,6 +1117,13 @@ class FacebookPoster(BasePoster):
             if choosers:
                 await choosers[-1].set_files(os.path.abspath(file_path))
                 logger.info("Đã chọn tệp từ menu Reel; chờ Facebook mở trình tạo mới.", "FACEBOOK")
+            if '/reels/create' in page.url:
+                try:
+                    await page.locator('[contenteditable="true"][role="textbox"]').first.wait_for(state='visible', timeout=45000)
+                    return await self._schedule_page_reel(page, caption, native, fb_cfg.get('mark_ai', True))
+                except Exception:
+                    # No submit happened: the next durable retry may restart this browser session.
+                    return {'success': False, 'url': '', 'error': 'Trình tạo Reel dạng trang bị kẹt tải; sẽ thử lại.'}
             if not await self._reel_dialog_ready(page):
                 logger.error("Hộp thoại Create reel không hiện.", "FACEBOOK")
                 await self._shot(page, "fb_create_dialog_fail")
@@ -1193,6 +1201,7 @@ class FacebookPoster(BasePoster):
                     goal=SCHEDULE_GOAL,
                 )
 
+            self.checkpoint_submission()
             if not await self._click_footer_schedule(page):
                 dump = await self._dump_schedule_debug(page)
                 await self._shot(page, "fb_schedule_footer_fail")
@@ -1225,13 +1234,16 @@ class FacebookPoster(BasePoster):
 
             post_url = ""
             if ok:
-                post_url = await self._copy_scheduled_post_link(page, caption)
+                try:
+                    post_url = await asyncio.wait_for(self._copy_scheduled_post_link(page, caption), timeout=60)
+                except Exception as exc:
+                    logger.warning(f'Chưa lấy được link Facebook: {type(exc).__name__}; chuyển sang xác minh bài.', 'FACEBOOK')
             if not post_url:
                 logger.warning(
                     "Đã lên lịch Facebook nhưng permalink chưa sẵn sàng; không lưu URL trang thư viện làm link bài.",
                     "FACEBOOK",
                 )
-            return {"success": True, "url": post_url, "error": ""}
+            return {"success": bool(ok), "url": post_url, "error": "" if ok else "Chưa xác nhận được bài trong thư viện; tiếp tục xác minh."}
 
         except Exception as ex:
             logger.error(f"Lỗi khi đăng lên Facebook: {str(ex)}", "FACEBOOK")

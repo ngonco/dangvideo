@@ -240,6 +240,7 @@ class UpdateManagerTests(unittest.TestCase):
                     "ready_path": ready,
                     "target_path": current,
                 }, handle)
+            os.utime(manager.applying_path, (time.time()-60, time.time()-60))
             self.assertEqual(manager.recover_stale_applying(max_age_seconds=0), "retry")
             self.assertTrue(os.path.isfile(manager.pending_path))
             self.assertFalse(os.path.exists(manager.applying_path))

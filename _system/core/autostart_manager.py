@@ -32,13 +32,34 @@ class AutoStartManager:
                 target = self.vbs_target
             else:
                 target = self.bat_target
+
+            arguments = ''
+            pythonw = os.path.join(SYSTEM_DIR, '.runtime', 'auto-dang-video', 'python', 'pythonw.exe')
+            supervisor = os.path.join(SYSTEM_DIR, 'core', 'app_supervisor.py')
+            if not os.path.isfile(supervisor) and hasattr(sys, '_MEIPASS'):
+                import shutil
+                bundled = os.path.join(sys._MEIPASS, 'app_supervisor.py')
+                if os.path.isfile(bundled):
+                    supervisor = os.path.join(SYSTEM_DIR, 'app_supervisor.py')
+                    shutil.copy2(bundled, supervisor)
+            if target == self.exe_target and os.path.isfile(pythonw) and os.path.isfile(supervisor):
+                arguments = f'"{supervisor}" "{self.exe_target}"'
+                target = pythonw
+
+            # PowerShell single-quoted values must escape literal quotes in user paths.
+            target = target.replace("'", "''")
+            arguments = arguments.replace("'", "''")
+            shortcut_path = self.shortcut_path.replace("'", "''")
+            working_dir = self.app_dir.replace("'", "''")
             
             # Sử dụng PowerShell để tạo file .lnk Windows Shortcut chuẩn xác
             ps_script = f"""
             $WshShell = New-Object -ComObject WScript.Shell;
-            $Shortcut = $WshShell.CreateShortcut('{self.shortcut_path}');
+            $Shortcut = $WshShell.CreateShortcut('{shortcut_path}');
             $Shortcut.TargetPath = '{target}';
-            $Shortcut.WorkingDirectory = '{self.app_dir}';
+            $Shortcut.Arguments = '{arguments}';
+            $Shortcut.WindowStyle = 7;
+            $Shortcut.WorkingDirectory = '{working_dir}';
             $Shortcut.Description = 'Auto Video Pro - Tu dong dang video';
             $Shortcut.Save();
             """

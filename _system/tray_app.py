@@ -254,6 +254,8 @@ class TrayApplication:
         self.server_thread = threading.Thread(target=self.start_uvicorn, daemon=True)
         self.server_thread.start()
 
+        threading.Thread(target=self._maintain_service, daemon=True).start()
+
         # 2. Khởi chạy luồng kiểm tra cổng sẵn sàng và mở Web
         threading.Thread(target=self.wait_and_open_dashboard, daemon=True).start()
 
@@ -270,6 +272,25 @@ class TrayApplication:
 
         # Chạy vòng lặp tray icon
         self.icon.run()
+
+    def _maintain_service(self):
+        """Hold system awake; let the launcher recover the whole crashed service."""
+        import ctypes
+        from core.config_manager import config_mgr
+        try:
+            while self._is_running:
+                if os.name == 'nt':
+                    auto = config_mgr.get('schedule', {}).get('auto_mode', False)
+                    ctypes.windll.kernel32.SetThreadExecutionState(0x80000001 if auto else 0x80000000)
+                if self.server_thread and not self.server_thread.is_alive():
+                    logger.error('Máy chủ ngừng bất thường; launcher sẽ khởi động lại ứng dụng.', 'SERVER')
+                    # Scheduler/browser objects belong to the failed event loop.
+                    # Reusing them on another thread can silently stop retries.
+                    os._exit(1)
+                time.sleep(30)
+        finally:
+            if os.name == 'nt':
+                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
 
 if __name__ == "__main__":
     is_post_update = "--post-update" in sys.argv
