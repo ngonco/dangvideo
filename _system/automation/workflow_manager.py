@@ -325,10 +325,11 @@ class WorkflowManager:
                     try:
                         page = await browser_engine.get_page(await browser_engine.get_context())
                         verified = await verify_delivery(page, posters[task['platform']], task['platform'], video, task)
-                        if verified.get('verified') and verified.get('url'):
-                            db.update_latest_success_post_url(video['id'], task['platform'], verified['url'])
-                            db.finish_posting_task(video['id'], task['platform'], verified['state'], post_url=verified['url'])
-                        else:
+                        if verified.get('verified'):
+                            if verified.get('url'):
+                                db.update_latest_success_post_url(video['id'], task['platform'], verified['url'])
+                            db.finish_posting_task(video['id'], task['platform'], verified['state'], post_url=verified.get('url',''))
+                        if not verified.get('url'):
                             with db.get_connection() as conn:
                                 conn.execute('UPDATE posting_tasks SET next_retry=? WHERE video_id=? AND platform=?', (stamp(local_now()+timedelta(hours=2)),video['id'],task['platform']))
                     except Exception as exc:

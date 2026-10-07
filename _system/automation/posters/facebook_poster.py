@@ -856,7 +856,7 @@ class FacebookPoster(BasePoster):
                 const rows = Array.from(document.querySelectorAll('div, tr, li')).filter(el => {
                     const t = (el.innerText || '').toLowerCase();
                     return snippet && t.includes(snippet) && t.length < 1500
-                        && /scheduled|đã lên lịch|tomorrow at|ngày mai lúc/.test(t)
+                        && /scheduled|đã lên lịch|tomorrow at|ngày mai lúc|published|đã đăng/.test(t)
                         && el.querySelector('[role="button"], button');
                 }).sort((a,b) => a.innerText.length - b.innerText.length);
                 const row = rows[0];
@@ -867,7 +867,7 @@ class FacebookPoster(BasePoster):
                     if (t.length > 80) return false;
                     const low = t.toLowerCase();
                     return low.includes('tomorrow at') || low.includes('ngày mai lúc')
-                        || /^scheduled\\s*[•·]/.test(low);
+                        || /^(?:scheduled|published|đã đăng)\\s*[•·]/.test(low);
                 });
                 if (!status) return 'no-status';
                 const sr = status.getBoundingClientRect();
@@ -958,10 +958,12 @@ class FacebookPoster(BasePoster):
             return false;
         }"""))
 
-    async def _copy_scheduled_post_link(self, page: Page, caption: str) -> str:
+    async def _copy_scheduled_post_link(self, page: Page, caption: str, published: bool = False) -> str:
         """Chờ Facebook tạo permalink, làm tươi tab Scheduled, Copy link bài vừa hẹn."""
         logger.info("Chờ Facebook tạo link bài vừa lên lịch, rồi làm tươi Content Library...", "FACEBOOK")
         await asyncio.sleep(20)
+        library_url = FB_LIBRARY_SCHEDULED.replace('SCHEDULED','PUBLISHED') if published else FB_LIBRARY_SCHEDULED
+        library_filter = 'filter=PUBLISHED' if published else 'filter=SCHEDULED'
         # Không gọi BrowserContext.grant_permissions cho clipboard ở đây.
         # Camoufox dùng Firefox; lời gọi quyền clipboard kiểu Chromium có thể làm
         # tiến trình trình duyệt thoát cứng. Sau cú click Copy link, Firefox vẫn
@@ -974,8 +976,8 @@ class FacebookPoster(BasePoster):
             # bước xác nhận vừa tải; các lần sau chỉ reload nhẹ.
             current_url = page.url
             logger.info(f"Content Library hiện tại: {current_url}", "FACEBOOK")
-            if "professional_dashboard/content/content_library" not in current_url or "filter=SCHEDULED" not in current_url:
-                await page.goto(FB_LIBRARY_SCHEDULED, wait_until="domcontentloaded", timeout=45000)
+            if "professional_dashboard/content/content_library" not in current_url or library_filter not in current_url:
+                await page.goto(library_url, wait_until="domcontentloaded", timeout=45000)
             elif attempt > 0:
                 await page.reload(wait_until="domcontentloaded", timeout=45000)
             logger.info("Content Library đã sẵn sàng, chờ giao diện ổn định...", "FACEBOOK")

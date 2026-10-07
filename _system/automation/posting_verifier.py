@@ -19,9 +19,9 @@ def schedule_fields_match(date, time, scheduled_for):
     return date in dates and normalized(time) in times
 
 
-async def matching_library_row(page, caption, scheduled_for=''):
+async def matching_library_row(page, caption, scheduled_for='', expected_url=''):
     title = (caption or '').split('\n')[0].strip()
-    rows = await page.evaluate('''(title) => {
+    rows = await page.evaluate('''({title,expected}) => {
         const norm=t=>(t||'').replace(/\\s+/g,' ').trim().toLowerCase();
         const candidates=[...document.querySelectorAll('tr,li,div')].filter(e=>{
             const t=norm(e.innerText);
@@ -34,8 +34,8 @@ async def matching_library_row(page, caption, scheduled_for=''):
             scheduled:!!e.querySelector('[data-tt="components_PublishStageLabel_FlexCenter"] [data-icon="Alarm"]'),
             stageText:e.querySelector('[data-tt="components_PublishStageLabel_FlexCenter"]')?.innerText||'',
             dates:[...e.querySelectorAll('time[datetime]')].map(t=>t.getAttribute('datetime'))
-        }));
-    }''', title)
+        })).filter(row=>!expected || !row.href || row.href.split('?')[0].replace(/\/$/,'')===expected.split('?')[0].replace(/\/$/,''));
+    }''', {'title':title,'expected':expected_url})
     # Ambiguous same-caption posts must not become another video's success.
     if len(rows) != 1 or not title:
         from core.logger import logger
@@ -93,7 +93,14 @@ async def verify_delivery(page, poster, platform, video, task, candidate_url='')
             await page.goto(FB_LIBRARY_SCHEDULED,wait_until='domcontentloaded',timeout=45000)
             await asyncio.sleep(4)
             await poster._dismiss_fb_popups(page)
-        row = await matching_library_row(page,caption,task.get('scheduled_for',''))
+        row = await matching_library_row(page,caption,task.get('scheduled_for',''),expected)
+        if not row and platform == 'facebook':
+            from core.posting_store import stamp
+            if task.get('scheduled_for') and task['scheduled_for'] <= stamp():
+                await page.goto(FB_LIBRARY_SCHEDULED.replace('SCHEDULED','PUBLISHED'),wait_until='domcontentloaded',timeout=45000)
+                await asyncio.sleep(4)
+                await poster._dismiss_fb_popups(page)
+                row=await matching_library_row(page,caption,task['scheduled_for'],expected)
         if not row:
             return {'verified':False,'url':''}
         if row['state'] == 'published':
@@ -120,12 +127,23 @@ async def verify_delivery(page, poster, platform, video, task, candidate_url='')
                         break
                     except ValueError:
                         continue
+            if platform == 'facebook':
+                anchor=task.get('scheduled_for') or task['submitted_at']
+                date_match=re.search(r'(?:published|đã đăng)\s*[•·]\s*(\d{1,2}\s+[a-z]{3}\s+at\s+\d{1,2}:\d{2})',normalized(row['text']))
+                if date_match:
+                    try:
+                        valid_dates.append(datetime.strptime(date_match.group(1),'%d %b at %H:%M').replace(year=int(anchor[:4]),tzinfo=VIETNAM))
+                    except ValueError:
+                        pass
             if not any(0 <= (d-submitted).total_seconds() <= 172800 for d in valid_dates if d.tzinfo):
                 return {'verified':False,'url':''}
-        url = row['href']
+        url = row['href'] or (expected if task.get('state') in ('scheduled','published') else '')
         if not url:
             try:
-                url = await asyncio.wait_for(poster._copy_scheduled_post_link(page,caption),timeout=35)
+                if platform == 'facebook':
+                    url = await asyncio.wait_for(poster._copy_scheduled_post_link(page,caption,published=row['state']=='published'),timeout=35)
+                else:
+                    url = await asyncio.wait_for(poster._copy_scheduled_post_link(page,caption),timeout=35)
             except Exception:
                 url = ''
         valid = poster._is_tt_permalink(url) if platform=='tiktok' else poster._is_fb_permalink(url)

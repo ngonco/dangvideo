@@ -373,6 +373,7 @@ Một trang cuộn duy nhất:
 - Khi ứng dụng sở hữu phiên khởi động, lượt tải lên chưa gửi bị gián đoạn được thử lại; lượt đã gửi phải xác minh. Không tự khôi phục video `cleaned` cũ vào hàng đợi.
 - Chỉ chuyển `posted` khi đủ các kênh đang bật; đăng thủ công một kênh không hoàn tất toàn bộ video. Giữ file khi còn kênh thiếu.
 - Link chưa có sau xác minh bài là tác vụ phục hồi link riêng; không tải lên lại chỉ để lấy link.
+- Sau giờ công khai, phục hồi Facebook kiểm tra cả tab Published, đọc ngày/giờ của hàng đã đăng; tiếp tục lấy link ở đúng tab. Lượt Scheduled có link cũng được đối chiếu trạng thái công khai sau giờ hẹn.
 - Thời gian lấy link trong poster tối đa 60 giây, trong verifier tối đa 35 giây. Chờ permalink không được chặn các kênh khác. Facebook Copy link kích hoạt bằng bàn phím thật để tránh treo đường đi chuột của Camoufox.
 - Chú thích TikTok được chèn nguyên khối và đọc lại đầy đủ, giữ dấu tiếng Việt/hashtag. Nếu có yêu cầu sửa rõ ràng `caption-repair:<platform>:<video_id>` trong `posting_health`, chỉ sửa đúng permalink đã gửi; bài đang khóa chỉnh sửa được giữ nguyên và kiểm tra lại mỗi 30 phút. Không xóa hoặc đăng lại để sửa mô tả.
 - Instagram Share được kích hoạt bằng bàn phím thật; verifier phải thấy đầy đủ chú thích cùng thời gian bài. Công cụ `repair_instagram_caption.py --video-id N --headless` hỗ trợ permalink của task đang xác minh và đọc lại trên trang mới.

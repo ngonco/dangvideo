@@ -174,7 +174,7 @@ class PostingStore:
 
     def tasks_missing_links(self):
         with self.get_connection() as conn:
-            return [dict(r) for r in conn.execute("SELECT * FROM posting_tasks WHERE state IN ('scheduled','published') AND post_url='' AND (next_retry='' OR next_retry<=?) ORDER BY updated_at LIMIT 10", (stamp(),))]
+            return [dict(r) for r in conn.execute("SELECT * FROM posting_tasks WHERE state IN ('scheduled','published') AND (post_url='' OR (state='scheduled' AND scheduled_for!='' AND scheduled_for<=?)) AND (next_retry='' OR next_retry<=?) ORDER BY updated_at LIMIT 10", (stamp(),stamp()))]
 
     def get_posting_health(self):
         run = self.get_daily_run()
