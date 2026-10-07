@@ -30,7 +30,7 @@ async def matching_library_row(page, caption, scheduled_for='', expected_url='')
                     || e.querySelector('[data-tt="components_PublishStageLabel_FlexCenter"]'));
         });
         return candidates.filter(e=>!candidates.some(x=>x!==e&&e.contains(x))).map(e=>({
-            text:e.innerText, href:e.querySelector('a[href*="/video/"],a[href*="/reel/"],a[href*="/share/r/"],a[href*="/posts/"]')?.href||'',
+            text:e.innerText, href:e.querySelector('a[href*="/video/"],a[href*="/videos/"],a[href*="/reel/"],a[href*="/share/r/"],a[href*="/share/v/"],a[href*="/posts/"]')?.href||'',
             scheduled:!!e.querySelector('[data-tt="components_PublishStageLabel_FlexCenter"] [data-icon="Alarm"]'),
             stageText:e.querySelector('[data-tt="components_PublishStageLabel_FlexCenter"]')?.innerText||'',
             dates:[...e.querySelectorAll('time[datetime]')].map(t=>t.getAttribute('datetime'))
@@ -141,7 +141,7 @@ async def verify_delivery(page, poster, platform, video, task, candidate_url='')
         if not url:
             try:
                 if platform == 'facebook':
-                    url = await asyncio.wait_for(poster._copy_scheduled_post_link(page,caption,published=row['state']=='published'),timeout=35)
+                    url = await asyncio.wait_for(poster._copy_scheduled_post_link(page,caption,published=row['state']=='published',scheduled_for=task.get('scheduled_for','')),timeout=35)
                 else:
                     url = await asyncio.wait_for(poster._copy_scheduled_post_link(page,caption),timeout=35)
             except Exception:
