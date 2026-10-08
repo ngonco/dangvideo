@@ -90,11 +90,11 @@ class SourceUIFixtures(unittest.IsolatedAsyncioTestCase):
         from automation.posting_verifier import verify_delivery
         from datetime import datetime
         async def navigate(url,**kwargs):
-            content='<div>Unrelated old title Published • 4 Oct at 20:00</div>' if 'SCHEDULED' in url else '<div><a href="https://www.facebook.com/reel/1234567890123/">Correct title</a>Published • 7 Oct at 20:00</div>'
+            content='<div>Unrelated old title Published • 4 Oct at 20:00</div>' if 'SCHEDULED' in url else '<div><a href="https://www.facebook.com/reel/1234567890123/">Correct title #test</a>Published • 7 Oct at 20:00</div>'
             await self.page.set_content(content)
         poster=FacebookPoster()
         with patch.object(self.page,'goto',AsyncMock(side_effect=navigate)),patch.object(poster,'_dismiss_fb_popups',AsyncMock()),patch('automation.posting_verifier.asyncio.sleep',AsyncMock()),patch('core.posting_store.local_now',return_value=datetime(2026,10,7,21)):
-            result=await verify_delivery(self.page,poster,'facebook',{'title':'Correct title'},{'state':'scheduled','submitted_at':'2026-10-07 15:00:00','scheduled_for':'2026-10-07 20:00:00'})
+            result=await verify_delivery(self.page,poster,'facebook',{'title':'Correct title','hashtags':'#test'},{'state':'scheduled','submitted_at':'2026-10-07 15:00:00','scheduled_for':'2026-10-07 20:00:00'})
         self.assertTrue(result['verified'])
         self.assertEqual(result['state'],'published')
         self.assertTrue(result['url'].endswith('/1234567890123/'))

@@ -349,15 +349,53 @@ class FacebookPoster(BasePoster):
         except Exception:
             return False
 
+    async def _wait_reel_composer(self, page: Page) -> str:
+        """The file chooser can navigate later; wait for either supported UI."""
+        try:
+            result=await page.wait_for_function(r"""() => {
+                const visible=e=>e&&e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+                if (/\/reels\/create\/?$/.test(location.pathname)
+                    && [...document.querySelectorAll('[contenteditable="true"][role="textbox"]')].some(visible)) return 'page';
+                const dialog=[...document.querySelectorAll('div[role="dialog"]')].find(e=>visible(e)
+                    && /create reel|tạo thước phim|add video|thêm video/i.test(e.innerText||''));
+                return dialog ? 'dialog' : '';
+            }""",timeout=45000)
+            return await result.json_value()
+        except Exception:
+            return ''
+
+    async def _attach_page_reel_media(self, page: Page, file_path: str) -> bool:
+        """Reattach only if the new page lost the initial chooser selection."""
+        add=page.get_by_role('button',name=re.compile(r'^(Add video|Thêm video)',re.I)).filter(visible=True)
+        if not await add.count():
+            return True
+        media=await page.locator('video:visible').evaluate_all('(es)=>es.some(e=>e.getAttribute("src")||e.querySelector("source[src]"))')
+        if media:
+            return True
+        files=page.locator('input[type="file"][accept*="video"]')
+        if await files.count()!=1:
+            logger.warning('Không nhận diện duy nhất ô tệp của trang Reel; chưa gửi bài.', 'FACEBOOK')
+            return False
+        if not await files.evaluate('(e)=>e.files.length'):
+            await files.set_input_files(os.path.abspath(file_path))
+            logger.info('Đã đính kèm tệp vào trang Reel sau khi chuyển giao diện.', 'FACEBOOK')
+        return True
+
+    async def _fill_page_reel_caption(self, page: Page, caption: str) -> bool:
+        # Describe and What's on your mind are both observed page composers.
+        # A hidden dialog textbox must never receive the production caption.
+        editors=page.locator('[contenteditable="true"][role="textbox"]').filter(visible=True)
+        if await editors.count()!=1:
+            return False
+        await editors.fill(caption)
+        from automation.posting_verifier import normalized
+        return normalized(await editors.inner_text())==normalized(caption)
+
     async def _schedule_page_reel(self, page: Page, caption: str, native: Dict[str, Any], mark_ai: bool) -> Dict[str, Any]:
         """Facebook's file-first composer at /reels/create (October 2026)."""
         if not native['enabled']:
             return {"success": False, "url": "", "error": "Chưa bật lịch Facebook; không đăng ngay."}
-        editor = page.locator('[contenteditable="true"][role="textbox"][aria-placeholder*="Describe"], '
-                              '[contenteditable="true"][role="textbox"][aria-placeholder*="mô tả"]').last
-        await editor.wait_for(state="visible", timeout=45000)
-        await editor.fill(caption)
-        if (await editor.inner_text()).strip() != caption.strip():
+        if not await self._fill_page_reel_caption(page,caption):
             return {"success": False, "url": "", "error": "Chú thích Facebook chưa khớp; không lên lịch."}
         if mark_ai:
             ai_row = page.get_by_role('button', name=re.compile(r'^Add AI label|^Thêm nhãn AI', re.I)).first
@@ -400,6 +438,10 @@ class FacebookPoster(BasePoster):
         await submit.wait_for(state="visible", timeout=10000)
         if not await submit.is_enabled():
             return {"success": False, "url": "", "error": "Nút lên lịch Facebook chưa khả dụng."}
+        from automation.posting_verifier import normalized
+        editors=page.locator('[contenteditable="true"][role="textbox"]').filter(visible=True)
+        if await editors.count()!=1 or normalized(await editors.inner_text())!=normalized(caption):
+            return {'success':False,'url':'','error':'Chú thích Facebook thay đổi trước khi gửi; không lên lịch.'}
         await self._shot(page, 'fb_page_before_schedule')
         self.checkpoint_submission()
         await submit.evaluate('el => el.click()')
@@ -1078,14 +1120,17 @@ class FacebookPoster(BasePoster):
             if choosers:
                 await choosers[-1].set_files(os.path.abspath(file_path))
                 logger.info("Đã chọn tệp từ menu Reel; chờ Facebook mở trình tạo mới.", "FACEBOOK")
-            if '/reels/create' in page.url:
+            composer=await self._wait_reel_composer(page)
+            if composer == 'page':
                 try:
-                    await page.locator('[contenteditable="true"][role="textbox"]').first.wait_for(state='visible', timeout=45000)
+                    if not await self._attach_page_reel_media(page,file_path):
+                        return {'success':False,'url':'','error':'Không nhận diện đúng tệp video trên trang Reel; chưa gửi bài.'}
                     return await self._schedule_page_reel(page, caption, native, fb_cfg.get('mark_ai', True))
-                except Exception:
-                    # No submit happened: the next durable retry may restart this browser session.
-                    return {'success': False, 'url': '', 'error': 'Trình tạo Reel dạng trang bị kẹt tải; sẽ thử lại.'}
-            if not await self._reel_dialog_ready(page):
+                except Exception as exc:
+                    # The durable submission checkpoint decides whether a retry
+                    # may upload or must reconcile, including timeouts after send.
+                    return {'success': False, 'url': '', 'error': f'Trình tạo Reel dạng trang chưa hoàn tất: {type(exc).__name__}; sẽ phục hồi theo checkpoint.'}
+            if composer != 'dialog':
                 logger.error("Hộp thoại Create reel không hiện.", "FACEBOOK")
                 await self._shot(page, "fb_create_dialog_fail")
                 return await fail_with_ai(

@@ -19,6 +19,30 @@ def schedule_fields_match(date, time, scheduled_for):
     return date in dates and normalized(time) in times
 
 
+def facebook_publication_time(text, task, now=None):
+    """Read Facebook's actual Published date, including Today/Yesterday labels."""
+    from datetime import datetime, timedelta
+    from core.posting_store import VIETNAM, local_now
+    match=re.search(r'(?:published|đã đăng)\s*[•·]\s*(.+)',normalized(text))
+    if not match:
+        return None
+    label=match.group(1)
+    relative=re.match(r'(today|yesterday|hôm nay|hôm qua)\s+(?:at|lúc)\s+(\d{1,2}:\d{2})',label)
+    try:
+        if relative:
+            current=now or local_now()
+            current=current.astimezone(VIETNAM) if current.tzinfo else current.replace(tzinfo=VIETNAM)
+            day=current.date()-timedelta(days=relative.group(1) in ('yesterday','hôm qua'))
+            return datetime.combine(day,datetime.strptime(relative.group(2),'%H:%M').time(),tzinfo=VIETNAM)
+        absolute=re.match(r'(\d{1,2}\s+[a-z]{3}\s+at\s+\d{1,2}:\d{2})',label)
+        anchor=task.get('scheduled_for') or task.get('submitted_at','')
+        if absolute and anchor:
+            return datetime.strptime(absolute.group(1),'%d %b at %H:%M').replace(year=int(anchor[:4]),tzinfo=VIETNAM)
+    except (ValueError,TypeError):
+        pass
+    return None
+
+
 async def matching_library_row(page, caption, scheduled_for='', expected_url=''):
     title = (caption or '').split('\n')[0].strip()
     rows = await page.evaluate('''({title,expected}) => {
@@ -103,6 +127,8 @@ async def verify_delivery(page, poster, platform, video, task, candidate_url='')
                 row=await matching_library_row(page,caption,task['scheduled_for'],expected)
         if not row:
             return {'verified':False,'url':''}
+        if platform=='facebook' and normalized(caption) not in normalized(row['text']):
+            return {'verified':False,'url':''}
         if row['state'] == 'published':
             from datetime import datetime
             from core.posting_store import VIETNAM
@@ -128,13 +154,9 @@ async def verify_delivery(page, poster, platform, video, task, candidate_url='')
                     except ValueError:
                         continue
             if platform == 'facebook':
-                anchor=task.get('scheduled_for') or task['submitted_at']
-                date_match=re.search(r'(?:published|đã đăng)\s*[•·]\s*(\d{1,2}\s+[a-z]{3}\s+at\s+\d{1,2}:\d{2})',normalized(row['text']))
-                if date_match:
-                    try:
-                        valid_dates.append(datetime.strptime(date_match.group(1),'%d %b at %H:%M').replace(year=int(anchor[:4]),tzinfo=VIETNAM))
-                    except ValueError:
-                        pass
+                published_at=facebook_publication_time(row['text'],task)
+                if published_at:
+                    valid_dates.append(published_at)
             if not any(0 <= (d-submitted).total_seconds() <= 172800 for d in valid_dates if d.tzinfo):
                 return {'verified':False,'url':''}
         url = row['href'] or (expected if task.get('state') in ('scheduled','published') else '')
