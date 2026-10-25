@@ -1,11 +1,13 @@
 import gc
 import json
+import smtplib
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 from unittest.mock import patch, Mock
+from email.message import EmailMessage
 from core.database import Database
 from core.error_digest import EmailReporter, SENDER_EMAIL, RECEIVER_EMAIL
 
@@ -116,6 +118,26 @@ class ErrorDigestTests(unittest.TestCase):
         with patch('core.error_digest.imaplib.IMAP4_SSL',return_value=mailbox):
             self.assertTrue(self.reporter.collect_mailbox())
         self.assertIn('11:*',mailbox.uid.call_args.args)
+
+    def test_smtp_retries_disconnect_only_before_data_and_ignores_quit_failure(self):
+        first,second=Mock(),Mock()
+        first.login.side_effect=smtplib.SMTPServerDisconnected('connection lost during auth')
+        second.send_message.return_value={}
+        second.quit.side_effect=smtplib.SMTPServerDisconnected('connection lost after success')
+        with patch('core.error_digest.smtplib.SMTP_SSL',side_effect=[first,second]),patch('core.error_digest.time.sleep'):
+            self.reporter._smtp_send(EmailMessage(),RECEIVER_EMAIL)
+        first.send_message.assert_not_called()
+        second.send_message.assert_called_once()
+
+    def test_smtp_never_retries_ambiguous_data_or_invalid_password(self):
+        for operation,error in (('send_message',smtplib.SMTPServerDisconnected('lost after DATA')),
+                                ('login',smtplib.SMTPAuthenticationError(535,b'Invalid credentials'))):
+            server=Mock()
+            getattr(server,operation).side_effect=error
+            with patch('core.error_digest.smtplib.SMTP_SSL',return_value=server) as connect:
+                with self.assertRaises(type(error)):
+                    self.reporter._smtp_send(EmailMessage(),RECEIVER_EMAIL)
+                connect.assert_called_once()
 
 
 if __name__=='__main__':

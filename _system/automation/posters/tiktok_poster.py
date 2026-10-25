@@ -254,7 +254,7 @@ class TikTokPoster(BasePoster):
         found = await page.evaluate(r"""kind => {
             const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
             const time=/^\d{1,2}:\d{2}(?:\s*[AP]M)?$/i;
-            const date=/^(?:\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}|\d{1,2}\s+tháng\s+\d{1,2},?\s+\d{4})$/i;
+            const date=/^(?:\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}|\d{1,2}\s+(?:tháng|thg)\s+\d{1,2},?\s+\d{4})$/i;
             document.querySelectorAll('[data-auto-video-picker="'+kind+'"]').forEach(e=>e.removeAttribute('data-auto-video-picker'));
             const root=document.querySelector('[data-e2e="schedule_container"],.scheduled-container,.schedule-container')||document;
             const matches=[...root.querySelectorAll('input,button,[role="button"],.scheduled-picker div,.scheduled-picker span')]
@@ -282,8 +282,23 @@ class TikTokPoster(BasePoster):
         if time_input is None:
             logger.warning("Không thấy ô giờ .scheduled-picker — radio Lên lịch có thể chưa bật.", "TIKTOK")
             return False
-        await time_input.evaluate('e=>e.click()')
+        await time_input.evaluate('e=>(e.closest("[role=combobox]")||e).click()')
         await asyncio.sleep(0.6)
+
+        modern=page.locator('.TimePicker__panel:visible')
+        if await modern.count()==1:
+            for label,value in ((r'^(Hours|Giờ)$',f"{int(native['hour']):02d}"),
+                                (r'^(Minutes|Phút)$',min_txt)):
+                column=modern.get_by_role('listbox',name=re.compile(label,re.I))
+                option=column.get_by_role('option').filter(has_text=re.compile(r'^'+value+r'$'))
+                if await option.count()!=1:
+                    return False
+                if await option.get_attribute('data-disabled')=='true' or not await option.is_enabled():
+                    return False
+                await option.evaluate('e=>e.click()')
+                await asyncio.sleep(0.3)
+            await self._dismiss_schedule_pickers(page)
+            return await self._picker_shows_time(page,native)
 
         hour_ok = await page.evaluate(
             """(hourTxt) => {
@@ -318,12 +333,43 @@ class TikTokPoster(BasePoster):
         return bool(hour_ok and min_ok)
 
     async def _set_date_picker(self, page: Page, native: Dict[str, Any]) -> bool:
+        if await self._picker_shows_date(page,native):
+            return True
         date_input = await self._schedule_control(page,'date')
         if date_input is None:
             logger.warning('Không nhận diện duy nhất ô ngày TikTok; chưa gửi bài.', 'TIKTOK')
             return False
-        await date_input.evaluate('e=>e.click()')
+        await date_input.evaluate('e=>(e.closest("[role=combobox]")||e).click()')
         await asyncio.sleep(0.6)
+        modern=page.locator('.DatePicker__titleMonth:visible')
+        if await modern.count()==1:
+            months=('january','february','march','april','may','june','july','august','september','october','november','december')
+            for _ in range(13):
+                label=(await modern.inner_text()).strip().casefold()
+                if label in months:
+                    month=months.index(label)+1
+                else:
+                    match=re.search(r'\d{1,2}',label)
+                    if not match:
+                        return False
+                    month=int(match[0])
+                year=int((await page.locator('.DatePicker__titleYear:visible').inner_text()).strip())
+                delta=(int(native['year'])-year)*12+int(native['month'])-month
+                if delta==0:
+                    target=page.locator('button.DatePicker__day:visible:not([disabled])[data-outside="false"]')\
+                        .filter(has_text=re.compile(r'^'+str(int(native['day']))+r'$'))
+                    if await target.count()!=1:
+                        return False
+                    await target.evaluate('e=>e.click()')
+                    await self._dismiss_schedule_pickers(page)
+                    return await self._picker_shows_date(page,native)
+                nav=page.get_by_role('button',name=re.compile(
+                    r'^(Next month|Tháng sau)$' if delta>0 else r'^(Previous month|Tháng trước)$',re.I))
+                if await nav.count()!=1 or not await nav.is_enabled():
+                    return False
+                await nav.evaluate('e=>e.click()')
+                await asyncio.sleep(0.3)
+            return False
         day = str(int(native["day"]))
         clicked = await page.evaluate(
             """(dayTxt) => {
@@ -366,12 +412,15 @@ class TikTokPoster(BasePoster):
                     return True
             except ValueError:
                 pass
-        match=re.fullmatch(r'(\d{1,2})\s+tháng\s+(\d{1,2}),?\s+(\d{4})',value,re.I)
+        match=re.fullmatch(r'(\d{1,2})\s+(?:tháng|thg)\s+(\d{1,2}),?\s+(\d{4})',value,re.I)
         return bool(match and (int(match[3]),int(match[2]),int(match[1]))==expected)
 
     async def _configure_schedule_picker(self, page: Page, native: Dict[str, Any]) -> bool:
-        time_ok = await self._set_time_picker(page, native)
         date_ok = await self._set_date_picker(page, native)
+        await self._dismiss_schedule_pickers(page)
+        if not date_ok:
+            return False
+        time_ok = await self._set_time_picker(page, native)
         await self._dismiss_schedule_pickers(page)
         time_matches = await self._picker_shows_time(page, native)
         if not time_matches:
@@ -428,9 +477,10 @@ class TikTokPoster(BasePoster):
     async def _dismiss_schedule_pickers(self, page: Page):
         """Bấm vùng Thời điểm đăng để đóng overlay picker (bản ghi action-021)."""
         try:
+            await page.keyboard.press('Escape')
             box = page.locator('[data-e2e="schedule_container"], .scheduled-container').first
             if await box.is_visible(timeout=1500):
-                await box.click(force=True, position={"x": 20, "y": 12})
+                await box.evaluate('e=>e.click()')
                 await asyncio.sleep(0.5)
         except Exception:
             pass

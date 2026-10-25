@@ -17,6 +17,9 @@ class _Locator:
     async def evaluate(self, script):
         return None
 
+    async def count(self):
+        return 0
+
 
 class _Page:
     def __init__(self):

@@ -385,11 +385,27 @@ class FacebookPoster(BasePoster):
         # Describe and What's on your mind are both observed page composers.
         # A hidden dialog textbox must never receive the production caption.
         editors=page.locator('[contenteditable="true"][role="textbox"]').filter(visible=True)
+        if await editors.count()==0:
+            try:
+                await editors.wait_for(state='visible',timeout=30000)
+            except Exception:
+                return False
         if await editors.count()!=1:
             return False
-        await editors.fill(caption)
         from automation.posting_verifier import normalized
-        return normalized(await editors.inner_text())==normalized(caption)
+        if normalized(await editors.inner_text())==normalized(caption):
+            return True
+        # Lexical may append on fill() while restoring a draft after media upload.
+        # Use actual editor input events to replace the entire previous caption.
+        for _ in range(2):
+            await editors.evaluate('e=>e.focus()')
+            await page.keyboard.press('Control+A')
+            await page.keyboard.press('Backspace')
+            await page.keyboard.insert_text(caption)
+            await asyncio.sleep(0.4)
+            if normalized(await editors.inner_text())==normalized(caption):
+                return True
+        return False
 
     async def _enable_page_ai_label(self, page: Page) -> bool:
         """Both input and div switches occur in the bilingual page composer."""
@@ -418,12 +434,63 @@ class FacebookPoster(BasePoster):
             logger.warning(f'Không xác nhận được nhãn AI Facebook: {exc}', 'FACEBOOK')
             return False
 
+    async def _ensure_page_reel_settings(self,page: Page) -> bool:
+        """Some page composers open Edit first, then expose scheduling in Settings."""
+        public=page.get_by_role('button',name=re.compile(r'Post audience|Đối tượng.*bài viết',re.I)).filter(visible=True)
+        if await public.count()==1:
+            return True
+        next_button=page.get_by_role('button',name=re.compile(r'^(Next|Tiếp)$',re.I)).filter(visible=True)
+        if await next_button.count()!=1:
+            return False
+        for _ in range(120):
+            if await next_button.is_enabled():
+                break
+            await asyncio.sleep(1)
+        else:
+            return False
+        await next_button.evaluate('e=>e.click()')
+        await public.wait_for(state='visible',timeout=30000)
+        return await public.count()==1
+
+    async def _page_reel_caption_matches(self,page: Page,caption: str) -> bool:
+        from automation.posting_verifier import normalized
+        editors=page.locator('[contenteditable="true"][role="textbox"]').filter(visible=True)
+        count=await editors.count()
+        if count==1:
+            return normalized(await editors.inner_text())==normalized(caption)
+        if count!=0:
+            return False
+        # Settings may unmount the Edit textbox. Read the current reel preview,
+        # never a hidden editor or text from the dashboard behind the composer.
+        return bool(await page.evaluate(r'''caption => {
+            const norm=t=>(t||'').replace(/\s+/g,' ').trim().toLowerCase();
+            const previews=[...document.querySelectorAll('[role="complementary"]')].filter(e=>e.getClientRects().length
+                && getComputedStyle(e).visibility!=='hidden'
+                && [...e.querySelectorAll('h2,h3,div,span')].some(h=>/^(preview|xem trước)$/i.test((h.innerText||'').trim())));
+            // The new preview is a complementary region; its video element lives
+            // elsewhere in the form, so video ancestry is not its boundary.
+            if(previews.length===1) return norm(previews[0].innerText).includes(norm(caption));
+            if(previews.length>1) return false;
+            const headings=[...document.querySelectorAll('h2,h3,div,span')].filter(e=>e.getClientRects().length
+                && /^(preview|xem trước)$/i.test((e.innerText||'').trim()));
+            for(const heading of headings) {
+                let box=heading;
+                for(let i=0;box&&i<8;box=box.parentElement,i++) {
+                    if(box===document.body) break;
+                    if(box.querySelector('video')) return norm(box.innerText).includes(norm(caption));
+                }
+            }
+            return false;
+        }''',caption))
+
     async def _schedule_page_reel(self, page: Page, caption: str, native: Dict[str, Any], mark_ai: bool) -> Dict[str, Any]:
         """Facebook's file-first composer at /reels/create (October 2026)."""
         if not native['enabled']:
             return {"success": False, "url": "", "error": "Chưa bật lịch Facebook; không đăng ngay."}
         if not await self._fill_page_reel_caption(page,caption):
             return {"success": False, "url": "", "error": "Chú thích Facebook chưa khớp; không lên lịch."}
+        if not await self._ensure_page_reel_settings(page):
+            return {'success':False,'url':'','error':'Chưa chuyển được từ Edit sang Settings của Facebook Reel; chưa gửi bài.'}
         if mark_ai:
             if not await self._enable_page_ai_label(page):
                 return {"success": False, "url": "", "error": "Chưa bật được nhãn AI Facebook."}
@@ -442,9 +509,28 @@ class FacebookPoster(BasePoster):
         await schedule.evaluate('el => el.click()')
         confirm = page.get_by_role('button', name=re.compile(r'^(Schedule for later|Lên lịch sau)$')).last
         await confirm.wait_for(state="visible", timeout=10000)
-        panel = page.locator('[role="dialog"]').filter(has=confirm).last
-        fields = panel.locator('input[role="combobox"]')
-        if await fields.count() != 2:
+        # Nested page/dialog variants give role=dialog to different wrappers.
+        # Bind to the nearest ancestor of this exact confirm button containing
+        # both visible scheduling fields, excluding Facebook's global Search.
+        bound=False
+        for _ in range(30):
+            bound=await confirm.evaluate('''button => {
+                document.querySelectorAll('[data-auto-video-schedule-panel]').forEach(e=>e.removeAttribute('data-auto-video-schedule-panel'));
+                let panel=button.parentElement;
+                while(panel&&panel!==document.body) {
+                    const fields=[...panel.querySelectorAll('input[role="combobox"]:not([type="search"])')]
+                        .filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden');
+                    if(fields.length===2) { panel.setAttribute('data-auto-video-schedule-panel','true');return true; }
+                    panel=panel.parentElement;
+                }
+                return false;
+            }''')
+            if bound:
+                break
+            await asyncio.sleep(0.3)
+        panel=page.locator('[data-auto-video-schedule-panel="true"]')
+        fields = panel.locator('input[role="combobox"]:not([type="search"])').filter(visible=True)
+        if not bound or await fields.count() != 2:
             return {"success": False, "url": "", "error": "Không nhận diện đúng hai trường lịch Facebook."}
         date_box, time_box = fields.nth(0), fields.nth(1)
         await date_box.fill(_fb_date_label(native))
@@ -458,11 +544,20 @@ class FacebookPoster(BasePoster):
         # The left Schedule button opens options; the blue right button submits.
         submit = page.get_by_role('button', name=re.compile(r'^(Schedule Post|Schedule|Lên lịch bài viết|Lên lịch)$', re.I)).last
         await submit.wait_for(state="visible", timeout=10000)
-        if not await submit.is_enabled():
+        for _ in range(120):
+            if await submit.is_enabled():
+                break
+            await asyncio.sleep(1)
+        else:
             return {"success": False, "url": "", "error": "Nút lên lịch Facebook chưa khả dụng."}
-        from automation.posting_verifier import normalized
-        editors=page.locator('[contenteditable="true"][role="textbox"]').filter(visible=True)
-        if await editors.count()!=1 or normalized(await editors.inner_text())!=normalized(caption):
+        await page.wait_for_function(r'''() => !/(?:uploading|đang tải lên)\s*\d+\s*%/i.test(document.body.innerText)''',timeout=180000)
+        caption_matches=False
+        for _ in range(20):
+            if await self._page_reel_caption_matches(page,caption):
+                caption_matches=True
+                break
+            await asyncio.sleep(0.5)
+        if not caption_matches:
             return {'success':False,'url':'','error':'Chú thích Facebook thay đổi trước khi gửi; không lên lịch.'}
         await self._shot(page, 'fb_page_before_schedule')
         self.checkpoint_submission()

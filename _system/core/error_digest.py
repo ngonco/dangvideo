@@ -6,6 +6,7 @@ import os
 import smtplib
 import socket
 import threading
+import time
 import uuid
 from datetime import datetime
 from email import policy
@@ -65,10 +66,33 @@ class EmailReporter:
         return text[:limit]
 
     def _smtp_send(self,message,recipient):
-        with smtplib.SMTP_SSL('smtp.gmail.com',465,timeout=20) as server:
-            server.login(SENDER_EMAIL,self._password())
+        # Retry only before DATA. A disconnect after sending is ambiguous and
+        # must never cause a second daily admin message.
+        server=None
+        for attempt in range(3):
+            try:
+                server=smtplib.SMTP_SSL('smtp.gmail.com',465,timeout=20)
+                server.login(SENDER_EMAIL,self._password())
+                break
+            except smtplib.SMTPAuthenticationError:
+                if server:
+                    server.close()
+                raise
+            except (smtplib.SMTPServerDisconnected,OSError):
+                if server:
+                    server.close()
+                if attempt==2:
+                    raise
+                time.sleep(0.5)
+        try:
             if server.send_message(message,from_addr=SENDER_EMAIL,to_addrs=[recipient]):
                 raise RuntimeError('SMTP từ chối người nhận')
+        finally:
+            # A QUIT failure after DATA was accepted must not mark a sent digest uncertain.
+            try:
+                server.quit()
+            except (smtplib.SMTPException,OSError):
+                server.close()
 
     def _send_raw_email(self,subject,html_body):
         try:

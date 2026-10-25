@@ -257,7 +257,7 @@ class WorkflowManager:
                     task_state = res.get('state') if res.get('success') else ('needs_login' if 'đăng nhập' in res.get('error','').casefold() else 'failed')
                     task_state = task_state or ('published' if plat == 'instagram' else 'scheduled')
                     db.finish_posting_task(video_id, plat, task_state, res.get('error',''), res.get('url',''))
-                    incident_changed = db.set_health(f'channel:{video_id}:{plat}', task_state if status == 'success' else db.get_posting_task(video_id,plat)['state'], res.get('error',''))
+                    db.set_health(f'channel:{video_id}:{plat}', task_state if status == 'success' else db.get_posting_task(video_id,plat)['state'], res.get('error',''))
                     if status == "failed" and res.get("error"):
                         try:
                             from core.email_reporter import email_reporter
