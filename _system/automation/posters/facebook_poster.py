@@ -391,6 +391,33 @@ class FacebookPoster(BasePoster):
         from automation.posting_verifier import normalized
         return normalized(await editors.inner_text())==normalized(caption)
 
+    async def _enable_page_ai_label(self, page: Page) -> bool:
+        """Both input and div switches occur in the bilingual page composer."""
+        try:
+            handle = await page.wait_for_function(r"""() => {
+                const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+                const labels=[...document.querySelectorAll('[role="button"],button,span')].filter(e=>visible(e)
+                    && /^(add ai label|ai label|thêm nhãn ai|nhãn ai)(\s|$)/i.test((e.innerText||'').trim()));
+                for (const label of labels) {
+                    let row=label;
+                    for(let depth=0;row&&depth<4;depth++,row=row.parentElement) {
+                        if(row===document.body||row.tagName==='MAIN') break;
+                        const switches=[...row.querySelectorAll('[role="switch"],input[type="checkbox"]')];
+                        if(switches.length===1) return switches[0];
+                        if(row.getAttribute('role')==='button'||row.tagName==='BUTTON') break;
+                    }
+                }
+                return null;
+            }""", timeout=15000)
+            toggle=handle.as_element()
+            enabled='e => e.getAttribute("aria-checked")==="true" || (e.type==="checkbox" && e.checked)'
+            if not await toggle.evaluate(enabled):
+                await toggle.evaluate('e=>e.click()')
+            return bool(await toggle.evaluate(enabled))
+        except Exception as exc:
+            logger.warning(f'Không xác nhận được nhãn AI Facebook: {exc}', 'FACEBOOK')
+            return False
+
     async def _schedule_page_reel(self, page: Page, caption: str, native: Dict[str, Any], mark_ai: bool) -> Dict[str, Any]:
         """Facebook's file-first composer at /reels/create (October 2026)."""
         if not native['enabled']:
@@ -398,12 +425,7 @@ class FacebookPoster(BasePoster):
         if not await self._fill_page_reel_caption(page,caption):
             return {"success": False, "url": "", "error": "Chú thích Facebook chưa khớp; không lên lịch."}
         if mark_ai:
-            ai_row = page.get_by_role('button', name=re.compile(r'^Add AI label|^Thêm nhãn AI', re.I)).first
-            toggle = ai_row.locator('input[role="switch"]')
-            await toggle.wait_for(state="attached", timeout=5000)
-            if await toggle.get_attribute('aria-checked') != 'true':
-                await toggle.evaluate('el => el.click()')
-            if await toggle.get_attribute('aria-checked') != 'true':
+            if not await self._enable_page_ai_label(page):
                 return {"success": False, "url": "", "error": "Chưa bật được nhãn AI Facebook."}
         public = page.get_by_role('button', name=re.compile(r'Post audience|Đối tượng.*bài viết', re.I)).first
         if not re.search(r'Public|Công khai', await public.inner_text(), re.I):
@@ -1129,7 +1151,11 @@ class FacebookPoster(BasePoster):
                 except Exception as exc:
                     # The durable submission checkpoint decides whether a retry
                     # may upload or must reconcile, including timeouts after send.
-                    return {'success': False, 'url': '', 'error': f'Trình tạo Reel dạng trang chưa hoàn tất: {type(exc).__name__}; sẽ phục hồi theo checkpoint.'}
+                    import traceback
+                    error = f'Trình tạo Reel chưa hoàn tất: {type(exc).__name__}: {exc}'
+                    logger.error(error, 'FACEBOOK')
+                    await self._shot(page, 'fb_page_composer_fail')
+                    return {'success': False, 'url': '', 'error': error, 'error_details': traceback.format_exc()}
             if composer != 'dialog':
                 logger.error("Hộp thoại Create reel không hiện.", "FACEBOOK")
                 await self._shot(page, "fb_create_dialog_fail")

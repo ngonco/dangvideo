@@ -249,20 +249,40 @@ class TikTokPoster(BasePoster):
             return false;
         }"""))
 
+    async def _schedule_control(self, page: Page, kind: str):
+        """Identify date/time by value, never by input order (timezone is an input too)."""
+        found = await page.evaluate(r"""kind => {
+            const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+            const time=/^\d{1,2}:\d{2}(?:\s*[AP]M)?$/i;
+            const date=/^(?:\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}|\d{1,2}\s+tháng\s+\d{1,2},?\s+\d{4})$/i;
+            document.querySelectorAll('[data-auto-video-picker="'+kind+'"]').forEach(e=>e.removeAttribute('data-auto-video-picker'));
+            const root=document.querySelector('[data-e2e="schedule_container"],.scheduled-container,.schedule-container')||document;
+            const matches=[...root.querySelectorAll('input,button,[role="button"],.scheduled-picker div,.scheduled-picker span')]
+                .filter(e=>visible(e)&&(kind==='time'?time:date).test((e.value||e.innerText||'').trim()))
+                .filter(e=>!e.closest('[role="listbox"],.tiktok-timepicker'));
+            // Prefer an input or the smallest text-bearing element, not a whole row.
+            const leaves=matches.filter(e=>!matches.some(other=>other!==e&&e.contains(other)));
+            if(leaves.length!==1) return false;
+            leaves[0].setAttribute('data-auto-video-picker',kind);
+            return true;
+        }""",kind)
+        return page.locator(f'[data-auto-video-picker="{kind}"]') if found else None
+
     async def _set_time_picker(self, page: Page, native: Dict[str, Any]) -> bool:
         hour = f"{int(native['hour']):02d}" if int(native["hour"]) >= 10 else str(int(native["hour"]))
         # Picker uses non-padded hours on some TikTok Studio variants.
         hour_txt = str(int(native["hour"]))
         min_txt = f"{int(native['minute']):02d}"
 
-        time_input = page.locator('.scheduled-picker input').first
-        if not await time_input.is_visible(timeout=4000):
+        time_input = await self._schedule_control(page,'time')
+        if time_input is None:
             await self._select_schedule_radio(page)
             await asyncio.sleep(1.0)
-        if not await time_input.is_visible(timeout=4000):
+            time_input = await self._schedule_control(page,'time')
+        if time_input is None:
             logger.warning("Không thấy ô giờ .scheduled-picker — radio Lên lịch có thể chưa bật.", "TIKTOK")
             return False
-        await time_input.click(force=True)
+        await time_input.evaluate('e=>e.click()')
         await asyncio.sleep(0.6)
 
         hour_ok = await page.evaluate(
@@ -298,15 +318,18 @@ class TikTokPoster(BasePoster):
         return bool(hour_ok and min_ok)
 
     async def _set_date_picker(self, page: Page, native: Dict[str, Any]) -> bool:
-        date_input = page.locator('.scheduled-picker input[readonly]').nth(1)
-        if not await date_input.is_visible(timeout=4000):
-            date_input = page.locator('.scheduled-picker input').nth(1)
-        await date_input.click(force=True)
+        date_input = await self._schedule_control(page,'date')
+        if date_input is None:
+            logger.warning('Không nhận diện duy nhất ô ngày TikTok; chưa gửi bài.', 'TIKTOK')
+            return False
+        await date_input.evaluate('e=>e.click()')
         await asyncio.sleep(0.6)
         day = str(int(native["day"]))
         clicked = await page.evaluate(
             """(dayTxt) => {
-                const days = Array.from(document.querySelectorAll('span.day.valid, span.jsx-1793871833.day.valid'));
+                const days = Array.from(document.querySelectorAll('span.day.valid, span.jsx-1793871833.day.valid'))
+                    .filter(el=>el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden'
+                        && !el.closest('[aria-disabled="true"]')&&!el.classList.contains('disabled'));
                 const hit = days.find(el => (el.innerText || '').trim() === dayTxt);
                 if (hit) { hit.click(); return true; }
                 return false;
@@ -317,14 +340,34 @@ class TikTokPoster(BasePoster):
         return bool(clicked)
 
     async def _picker_shows_time(self, page: Page, native: Dict[str, Any]) -> bool:
-        want = native["time"]
-        vals = await page.evaluate("""() => {
-            return Array.from(document.querySelectorAll('.scheduled-picker input')).map(i => i.value || '');
-        }""")
-        blob = " ".join(vals or [])
-        ok = want in blob or f"{int(native['hour'])}:{int(native['minute']):02d}" in blob
-        logger.info(f"TikTok picker values={vals} want={want} ok={ok}", "TIKTOK")
-        return bool(ok)
+        control=await self._schedule_control(page,'time')
+        if control is None:
+            return False
+        value=await control.evaluate('(e)=>(e.value||e.innerText||"").trim()')
+        match=re.fullmatch(r'(\d{1,2}):(\d{2})(?:\s*([AP]M))?',value,re.I)
+        if not match:
+            return False
+        hour,minute=int(match[1]),int(match[2])
+        if match[3]:
+            hour=hour%12+(12 if match[3].upper()=='PM' else 0)
+        return (hour,minute)==(int(native['hour']),int(native['minute']))
+
+    async def _picker_shows_date(self,page: Page,native: Dict[str,Any]) -> bool:
+        control=await self._schedule_control(page,'date')
+        if control is None:
+            return False
+        value=await control.evaluate('(e)=>(e.value||e.innerText||"").trim()')
+        from datetime import datetime
+        expected=(int(native['year']),int(native['month']),int(native['day']))
+        for fmt in ('%Y-%m-%d','%Y/%m/%d','%b %d, %Y','%B %d, %Y','%d %b %Y','%d/%m/%Y','%m/%d/%Y'):
+            try:
+                parsed=datetime.strptime(value,fmt)
+                if (parsed.year,parsed.month,parsed.day)==expected:
+                    return True
+            except ValueError:
+                pass
+        match=re.fullmatch(r'(\d{1,2})\s+tháng\s+(\d{1,2}),?\s+(\d{4})',value,re.I)
+        return bool(match and (int(match[3]),int(match[2]),int(match[1]))==expected)
 
     async def _configure_schedule_picker(self, page: Page, native: Dict[str, Any]) -> bool:
         time_ok = await self._set_time_picker(page, native)
@@ -339,7 +382,7 @@ class TikTokPoster(BasePoster):
             time_ok = await self._set_time_picker(page, native)
             await self._dismiss_schedule_pickers(page)
             time_matches = await self._picker_shows_time(page, native)
-        return bool(time_ok and date_ok and time_matches)
+        return bool(time_ok and date_ok and time_matches and await self._picker_shows_date(page,native))
 
     async def _handle_continue_to_post(self, page: Page) -> bool:
         """Hộp 'Continue to post?' ngoài dự kiến — bấm Post now trong dialog (xác nhận lịch đã chọn)."""

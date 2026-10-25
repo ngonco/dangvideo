@@ -258,7 +258,7 @@ class WorkflowManager:
                     task_state = task_state or ('published' if plat == 'instagram' else 'scheduled')
                     db.finish_posting_task(video_id, plat, task_state, res.get('error',''), res.get('url',''))
                     incident_changed = db.set_health(f'channel:{video_id}:{plat}', task_state if status == 'success' else db.get_posting_task(video_id,plat)['state'], res.get('error',''))
-                    if status == "failed" and res.get("error") and incident_changed:
+                    if status == "failed" and res.get("error"):
                         try:
                             from core.email_reporter import email_reporter
                             v_title = video.get('suggested_title') or video.get('title') or f"Video #{video_id}"

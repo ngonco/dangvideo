@@ -115,6 +115,7 @@ Auto_Dang_video/
     │   ├── config_manager.py   # DEFAULT_CONFIG username/password trống; đọc config.json local
     │   ├── database.py
     │   ├── email_reporter.py
+    │   ├── error_digest.py     # Hàng đợi lỗi, mailbox chung, một máy tổng hợp gửi lúc 08:00 VN
     │   ├── schedule_helper.py   # Native theo cài đặt user; Instagram min_gap_hours
     │   ├── logger.py
     │   └── autostart_manager.py
@@ -251,7 +252,11 @@ Public trên git: `config.example.json` (username/password trống), `.env.examp
 ## 6. MODULE ĐỘC LẬP BÁO CÁO EMAIL
 
 - SMTP: mật khẩu chỉ đọc từ `config.json` local (`email.smtp_password`) hoặc biến `AUTO_VIDEO_SMTP_PASSWORD`; không nhúng vào mã nguồn. Tài khoản gửi `binhyentram89@gmail.com` (Gmail SSL 465). Admin: `thv.vinh@gmail.com`.
-- `send_error_alert` khi lỗi kênh; `send_daily_summary` lúc 22:00.
+- `send_error_alert` chỉ ghi lỗi vào `error_events` trong SQLite, không gửi cảnh báo tức thì. Lưu user, máy, kênh, bước, chi tiết và thời điểm Việt Nam; không lưu mật khẩu trong báo cáo.
+- Mỗi máy đồng bộ lỗi mỗi 5 phút bằng email dữ liệu nội bộ `[AUTO_VIDEO_ERROR_BATCH_V1]` đến **chính hộp thư gửi** `binhyentram89@gmail.com`; UUID chặn trùng khi gửi lại. SMTP cần mật khẩu ứng dụng hợp lệ trên từng máy.
+- **Một máy tổng hợp duy nhất:** cấu hình local `email.coordinator_hostname` khớp hostname máy đó; mặc định public để trống. Máy tổng hợp đọc IMAP SSL 993 của hộp thư gửi, giữ cursor UID/UIDVALIDITY, không xóa thư hoặc đánh dấu đã đọc.
+- **08:00 giờ Việt Nam:** chỉ máy tổng hợp gửi một email lỗi chung của mọi user đến admin. Gộp lỗi giống nhau và đếm số lần. Không còn báo cáo 22:00. Không có lỗi thì không gửi. Lỗi đến muộn hoặc sau mốc 08:00 nằm trong báo cáo ngày kế tiếp.
+- Máy tổng hợp cần bật, có mạng và quyền IMAP; mở sau 08:00 thì gửi bù tối đa một lần ngày đó. Giao dịch `error_digest_runs` chặn lặp qua khởi động lại/chu kỳ đồng thời. SMTP lỗi hoặc kết quả không rõ không gửi lại cùng ngày; giữ lỗi để gộp hôm sau. Nếu tiến trình chết giữa lần gửi, hôm sau gộp lại phần chưa xác nhận.
 
 ---
 
@@ -419,6 +424,7 @@ Tài liệu này khớp mã nguồn hiện tại: native schedule, Instagram per
 
 | Ngày | Tác giả | Thay đổi | Lý do |
 | :--- | :--- | :--- | :--- |
+| 2026-10-25 | Codex | TikTok nhận diện ô ngày/giờ bằng giá trị thay vì vị trí input, bỏ qua ô múi giờ và đọc lại cả ngày/giờ; Facebook hỗ trợ nhãn AI có switch dạng div/input và lưu đầy đủ lỗi/ảnh ở trình tạo Reel; báo cáo lỗi qua hộp thư chung, một máy tổng hợp gửi lúc 08:00 Việt Nam. | TikTok đổi thứ tự ngày/giờ/múi giờ làm selector cũ chọn nhầm Search; Facebook chỉ ghi tên ngoại lệ khiến khó xác định bước kẹt. User yêu cầu một email chung cho tất cả user mỗi sáng. |
 | 2026-10-08 | Codex | Chờ trình tạo Reel dạng trang sau chọn tệp, phục hồi tệp bị mất khi chuyển trang, điền và đọc lại ô chú thích mới; nhận ngày Published tương đối theo ngày Việt Nam. | Theo dõi thật: lượt #24 có ba kênh thành công nhưng Facebook đã mở trang mới sau lần kiểm tra URL, dẫn đến chờ nhầm dialog và thiếu tệp. Bài #23 đã Published nhưng nhãn Yesterday at 20:01 không được parser cũ nhận. |
 | 2026-10-07 | Codex | Sửa Facebook nhận `share/v/`, bỏ chờ cố định và giới hạn toàn tác vụ lấy link 30 giây; chọn đúng hàng/nút Actions, bỏ hàng ẩn/link thông báo/clipboard cũ; kiểm thử Anh/Việt và Scheduled/Published. | Trình duyệt thật đã Copy link thành công bài #23 nhưng URL `share/v/` bị bộ kiểm tra cũ loại bỏ, khiến Dashboard luôn báo đang khôi phục. Đã khôi phục đúng link, giữ lịch 20:00 và không đăng thêm bài. |
 | 2026-10-07 | Codex | Thêm lượt ngày và checkpoint từng kênh, kho 7 video, backoff 30/60/120 phút, trạng thái nguồn/đăng, SHA-256, phục hồi link và tiến trình; thống nhất lịch theo user. | Trình duyệt thật xác nhận 10 mục nguồn đều báo Video đã xoá; mã cũ coi trạng thái lạ là đã tải. Đăng bù không được chiếm lượt ngày mới và thành công một phần không được dừng các kênh thiếu. |

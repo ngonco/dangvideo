@@ -64,6 +64,7 @@ cmd = [
     "--hidden-import", "automation.posters.youtube_poster",
     "--hidden-import", "automation.posters.tiktok_poster",
     "--hidden-import", "core.email_reporter",
+    "--hidden-import", "core.error_digest",
     "--hidden-import", "core.schedule_helper",
     "--hidden-import", "psutil",
     "--collect-all", "camoufox",

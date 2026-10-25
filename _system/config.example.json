@@ -61,6 +61,7 @@
     "target_date": "tomorrow"
   },
   "email": {
+    "coordinator_hostname": "",
     "smtp_password": ""
   },
   "custom_caption": {

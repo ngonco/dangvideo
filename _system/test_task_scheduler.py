@@ -32,6 +32,18 @@ class DailyPostDatabaseTests(unittest.TestCase):
 
 
 class DailyPostSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shared_digest_at_eight_with_catchup_independent_of_auto_posting(self):
+        scheduler=TaskScheduler()
+        scheduler.reload_jobs()
+        job=scheduler.scheduler.get_job('daily_email_report_job')
+        self.assertIn('hour=\'8\'',str(job.trigger))
+        self.assertIsNone(job.misfire_grace_time)
+        sync=scheduler.scheduler.get_job('error_mail_sync_job')
+        self.assertEqual(sync.trigger.interval,timedelta(minutes=5))
+        with patch('core.email_reporter.email_reporter.process_reports') as process:
+            await scheduler._scheduled_daily_email_report()
+            process.assert_called_once()
+
     async def test_job_runs_immediately_and_repeats_every_30_minutes(self):
         scheduler = TaskScheduler()
         before = datetime.now() - timedelta(seconds=1)

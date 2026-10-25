@@ -14,6 +14,9 @@ class _Locator:
     async def click(self, force=False):
         return None
 
+    async def evaluate(self, script):
+        return None
+
 
 class _Page:
     def __init__(self):
@@ -47,6 +50,9 @@ class _PickerPoster(TikTokPoster):
 
     async def _picker_shows_time(self, page, native):
         return next(self.matches)
+
+    async def _picker_shows_date(self, page, native):
+        return True
 
 
 class TikTokTimePickerTests(unittest.IsolatedAsyncioTestCase):

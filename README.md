@@ -37,3 +37,12 @@ Sao chép [`_system/config.example.json`](_system/config.example.json) thành `_
 - Tray icon, khởi động cùng Windows, dọn video cũ.
 
 Tài liệu kỹ thuật: [`_system/SYSTEM_MAP.MD`](_system/SYSTEM_MAP.MD)
+
+## Báo cáo lỗi chung lúc 08:00
+
+Mỗi máy lưu lỗi tại chỗ và chuyển dữ liệu vào hộp thư gửi `binhyentram89@gmail.com`. Chỉ máy được chọn làm máy tổng hợp mới gửi **một email chung cho tất cả user lúc 08:00 giờ Việt Nam** đến quản trị viên. Lỗi giống nhau được gộp và đếm số lần; không gửi cảnh báo riêng từng lỗi và không còn báo cáo 22:00.
+
+- Mọi máy cần cấu hình mật khẩu ứng dụng Gmail hợp lệ trong `email.smtp_password` của `_system/config.json` local hoặc biến `AUTO_VIDEO_SMTP_PASSWORD`.
+- Chỉ máy tổng hợp đặt `email.coordinator_hostname` bằng đúng tên máy Windows. Các máy khác để trống. Máy tổng hợp cần truy cập được IMAP SSL cổng 993.
+- Máy tổng hợp phải bật và có mạng. Mở sau 08:00 thì gửi bù một lần trong ngày; lỗi sau 08:00 hoặc đến muộn được gộp vào ngày kế tiếp. Không có lỗi thì không gửi.
+- Các máy phải chạy phiên bản mới để chuyển lỗi vào hộp thư chung. Không sao chép mật khẩu hoặc dữ liệu local vào mã nguồn, GitHub hoặc file EXE.

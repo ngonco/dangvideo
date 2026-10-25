@@ -71,6 +71,10 @@ DEFAULT_CONFIG = {
             "default_time": "10:00",
             "target_date": "tomorrow"
         },
+    "email": {
+        "smtp_password": "",
+        "coordinator_hostname": ""
+    },
     "custom_caption": {
         "prefix_text": "",
         "append_text": ""

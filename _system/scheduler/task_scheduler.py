@@ -74,21 +74,24 @@ class TaskScheduler:
         )
         logger.info("Đã lập lịch tự động dọn dẹp video đã đăng cũ (> 2 ngày) hàng ngày lúc 00:05.", "SCHEDULER")
 
-        # Daily summary email report job at 22:00
+        # Sync every client's durable outbox; only the coordinator sends a digest.
+        self.scheduler.add_job(self._scheduled_daily_email_report,
+            trigger=IntervalTrigger(minutes=5, timezone=VIETNAM),
+            next_run_time=datetime.now(VIETNAM), id='error_mail_sync_job',
+            replace_existing=True, coalesce=True, max_instances=1, misfire_grace_time=None)
         self.scheduler.add_job(
             self._scheduled_daily_email_report,
-            trigger=CronTrigger(hour=22, minute=0, timezone=VIETNAM),
+            trigger=CronTrigger(hour=8, minute=0, timezone=VIETNAM),
             id="daily_email_report_job",
-            replace_existing=True
+            replace_existing=True, coalesce=True, max_instances=1, misfire_grace_time=None
         )
-        logger.info("Đã lập lịch tự động gửi báo cáo tổng kết hàng ngày qua Email lúc 22:00.", "SCHEDULER")
+        logger.info("Báo cáo lỗi chung tất cả user: 08:00 giờ Việt Nam, tối đa một email/ngày từ máy tổng hợp.", "SCHEDULER")
 
     async def _scheduled_daily_email_report(self):
-        """Tự động tổng hợp và gửi email báo cáo tổng kết video đã đăng trong ngày"""
+        """Sync error data and let the designated coordinator send the 08:00 digest."""
         try:
             from core.email_reporter import email_reporter
-            logger.info("Bắt đầu tổng hợp và gửi báo cáo ngày qua Email...", "EMAIL")
-            email_reporter.send_daily_summary()
+            await asyncio.to_thread(email_reporter.process_reports)
         except Exception as ex:
             logger.warning(f"Lỗi gửi báo cáo ngày qua email: {ex}", "EMAIL")
 
