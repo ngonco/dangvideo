@@ -8,7 +8,6 @@ let isShowBrowser = false;
 let currentBrowserConfig = { headless: true, mute_audio: true, user_data_dir: "browser_profiles/default" };
 let currentTimeSlots = ["08:00", "11:30", "19:30"];
 let socket = null;
-let userManuallyToggledLogin = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
@@ -123,25 +122,15 @@ function setupEventListeners() {
         btnOpenDownloadsFolder.addEventListener('click', openDownloadsFolder);
     }
 
-    // Accordion Đăng Nhập Tài Khoản
-    const btnToggleLogin = document.getElementById('btnToggleLogin');
-    if (btnToggleLogin) {
-        btnToggleLogin.addEventListener('click', () => {
-            userManuallyToggledLogin = true;
-            toggleLoginAccordion();
-        });
-    }
+    // Các mục mặc định thu gọn; chỉ mở một mục mỗi lần.
+    document.querySelectorAll('[data-panel-content]').forEach(button => {
+        button.addEventListener('click', () => toggleDashboardPanel(button));
+    });
 
     // Nút Lưu tài khoản HatBuiNho
     const btnSaveHbn = document.getElementById('btnSaveHbn');
     if (btnSaveHbn) {
         btnSaveHbn.addEventListener('click', saveHatBuiNhoConfig);
-    }
-
-    // Accordion Tùy Chỉnh Nâng Cao
-    const btnToggleAdvanced = document.getElementById('btnToggleAdvanced');
-    if (btnToggleAdvanced) {
-        btnToggleAdvanced.addEventListener('click', toggleAdvancedAccordion);
     }
 
     // Công tắc Khởi động cùng Windows
@@ -873,18 +862,15 @@ async function runWorkflowNow(forceRepost = false, scheduleTime = null, targetDa
 // --------------------------------------------------------------------------
 // 4. ACCORDION ĐĂNG NHẬP TÀI KHOẢN & KIỂM TRA TRẠNG THÁI
 // --------------------------------------------------------------------------
-function toggleLoginAccordion() {
-    const content = document.getElementById('loginAccordionContent');
-    const arrow = document.getElementById('accordionLoginArrow');
-    if (!content) return;
-
-    if (content.style.display === 'none') {
-        content.style.display = 'block';
-        if (arrow) arrow.classList.add('rotated');
-    } else {
-        content.style.display = 'none';
-        if (arrow) arrow.classList.remove('rotated');
-    }
+function toggleDashboardPanel(button) {
+    const shouldOpen = button.getAttribute('aria-expanded') !== 'true';
+    document.querySelectorAll('[data-panel-content]').forEach(other => {
+        const open = other === button && shouldOpen;
+        const content = document.getElementById(other.dataset.panelContent);
+        if (content) content.style.display = open ? 'block' : 'none';
+        other.setAttribute('aria-expanded', String(open));
+        other.querySelector('.accordion-arrow')?.classList.toggle('rotated', open);
+    });
 }
 
 async function fetchAccountsStatus() {
@@ -909,8 +895,6 @@ async function fetchAccountsStatus() {
 
             const badgeSummary = document.getElementById('badgeAccountSummary');
             const loginSub = document.getElementById('loginAccordionSub');
-            const loginContent = document.getElementById('loginAccordionContent');
-            const arrow = document.getElementById('accordionLoginArrow');
 
             if (badgeSummary) {
                 if (connected === total) {
@@ -919,24 +903,12 @@ async function fetchAccountsStatus() {
                     badgeSummary.style.color = 'var(--tea-green)';
                     badgeSummary.style.borderColor = 'var(--tea-green-border)';
                     if (loginSub) loginSub.innerText = 'Tất cả tài khoản đã sẵn sàng tự động đăng video.';
-                    
-                    // Tự động thu gọn nếu user chưa can thiệp thủ công
-                    if (!userManuallyToggledLogin && loginContent) {
-                        loginContent.style.display = 'none';
-                        if (arrow) arrow.classList.remove('rotated');
-                    }
                 } else {
                     badgeSummary.innerText = `⚠️ Đã kết nối ${connected}/5 kênh`;
                     badgeSummary.style.background = '#FFF8E1';
                     badgeSummary.style.color = '#F57F17';
                     badgeSummary.style.borderColor = '#FFE082';
                     if (loginSub) loginSub.innerText = '👉 Có kênh chưa đăng nhập. Bấm vào đây để đăng nhập tài khoản!';
-                    
-                    // Tự động mở rộng nếu còn thiếu kênh
-                    if (!userManuallyToggledLogin && loginContent) {
-                        loginContent.style.display = 'block';
-                        if (arrow) arrow.classList.add('rotated');
-                    }
                 }
             }
         }
@@ -1220,7 +1192,7 @@ async function fetchQueueVideos() {
                     <div class="queue-empty-title">Kho Đang Trống (0 Video Chờ Đăng)</div>
                     <div class="queue-empty-sub">
                         Hiện chưa có video nào được tải về máy để chờ đăng.<br>
-                        Bấm nút <b>"ĐĂNG HÀNG LOẠT THEO LỊCH"</b> ở trên để hệ thống tự động quét & gom các video mới từ HatBuiNho vào kho này!
+                        Hệ thống tự động kiểm tra video mới từ HatBuiNho khi bật tự động. Bạn cũng có thể dùng nút <b>"ĐĂNG 1 VIDEO NGAY"</b> ở cuối trang.
                     </div>
                 </div>
             `;
@@ -1476,19 +1448,6 @@ async function retryPostPlatform(videoId, platform, event) {
 // --------------------------------------------------------------------------
 // 6. ACCORDION CÀI ĐẶT NÂNG CAO
 // --------------------------------------------------------------------------
-function toggleAdvancedAccordion() {
-    const content = document.getElementById('advancedContent');
-    const arrow = document.getElementById('accordionAdvancedArrow');
-    if (!content) return;
-
-    if (content.style.display === 'none' || content.style.display === '') {
-        content.style.display = 'block';
-        if (arrow) arrow.classList.add('rotated');
-    } else {
-        content.style.display = 'none';
-        if (arrow) arrow.classList.remove('rotated');
-    }
-}
 
 async function fetchAutostartStatus() {
     try {

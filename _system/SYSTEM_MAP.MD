@@ -12,6 +12,14 @@
 
 ---
 
+## Dashboard thu gọn (12/11/2026)
+
+- Đăng nhập tài khoản nằm đầu nội dung trang. Trạng thái hệ thống, giờ công khai, kho video, lịch sử và tùy chỉnh nâng cao đều thu gọn mặc định.
+- Bấm tiêu đề để mở/đóng; mở một mục tự đóng mục khác. Việc cập nhật trạng thái tài khoản không tự mở mục đăng nhập.
+- Nhãn lịch là **Giờ đăng video công khai:**; giữ nguyên cơ chế chọn mốc giờ công khai hiện có.
+- Bốn nút bật/tắt tự động, đăng một video, tắt tiếng và hiển thị trình duyệt nằm cuối trang, cuộn tới mới thấy; không ghim. Nút đăng hàng loạt được ẩn khỏi giao diện.
+- `toggleDashboardPanel` trong `static/js/app.js` quản lý chung các mục bằng `data-panel-content` và `aria-expanded`.
+
 ## MỤC LỤC
 1. [Sơ Đồ Kiến Trúc Hệ Thống](#1-sơ-đồ-kiến-trúc-hệ-thống)
 2. [Bản Đồ Cấu Trúc File](#2-bản-đồ-cấu-trúc-file)
